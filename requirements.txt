@@ -1,0 +1,21 @@
+# Requirements pour l'application IFS NEO Data Extractor
+# Compatible avec Python 3.8+
+
+# Interface utilisateur web
+streamlit>=1.28.0
+
+# Manipulation de données
+pandas>=2.0.0
+
+# Lecture/écriture fichiers Excel
+openpyxl>=3.1.0
+
+# Optionnel: pour de meilleures performances avec pandas
+xlsxwriter>=3.1.0
+
+# Optionnel: pour des graphiques plus avancés (si besoin futur)
+plotly>=5.15.0
+matplotlib>=3.7.0
+
+# Optionnel: pour des composants Streamlit avancés
+streamlit-option-menu>=0.3.6
