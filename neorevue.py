@@ -127,73 +127,195 @@ UUID_MAPPING_URL = "https://raw.githubusercontent.com/M00N69/Gemini-Knowledge/re
 
 # Functions for work save/load
 def save_work_to_excel(profile_data, checklist_data, non_conformities, edited_profile=None, edited_checklist=None, edited_nc=None, coid="inconnu"):
-    """Save current work with comments to Excel for later resume"""
+    """Save current work with comments to Excel for later resume and reviewer/auditor communication"""
     output = BytesIO()
     
     # Extract company name for filename
     company_name = profile_data.get("Nom du site à auditer", "entreprise_inconnue")
     # Clean company name for filename (remove special characters)
-    import re
     clean_company_name = re.sub(r'[^\w\s-]', '', company_name).strip()
     clean_company_name = re.sub(r'[-\s]+', '_', clean_company_name)
     
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+    # Use xlsxwriter for better formatting in communication files
+    with pd.ExcelWriter(output, engine='xlsxwriter', options={'strings_to_urls': False}) as writer:
+        workbook = writer.book
+        
+        # Define professional formats for reviewer/auditor communication
+        header_format = workbook.add_format({
+            'bold': True,
+            'text_wrap': True,
+            'valign': 'top',
+            'fg_color': '#4472C4',  # Professional blue
+            'font_color': 'white',
+            'border': 1,
+            'font_size': 11
+        })
+        
+        cell_format = workbook.add_format({
+            'text_wrap': True,
+            'valign': 'top',
+            'border': 1,
+            'font_size': 10
+        })
+        
+        reviewer_format = workbook.add_format({
+            'text_wrap': True,
+            'valign': 'top',
+            'border': 1,
+            'fg_color': '#E7F3FF',  # Light blue for reviewer comments
+            'font_size': 10
+        })
+        
+        auditor_format = workbook.add_format({
+            'text_wrap': True,
+            'valign': 'top',
+            'border': 1,
+            'fg_color': '#F0F8E7',  # Light green for auditor responses
+            'font_size': 10
+        })
+        
         # Metadata sheet to identify this as a work file
         metadata = pd.DataFrame({
             "Type": ["IFS_WORK_SAVE"],
             "COID": [coid],
             "Company_Name": [company_name],
-            "Date": [pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")]
+            "Date": [pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")],
+            "Purpose": ["Communication Reviewer/Auditeur"]
         })
         metadata.to_excel(writer, index=False, sheet_name="METADATA")
         
-        # Profile with comments
+        # Profile with enhanced communication structure
         if edited_profile is not None:
             profile_save_df = edited_profile.copy()
         else:
             profile_save_df = pd.DataFrame([
-                {"Champ": k, "Valeur": v, "Commentaire": ""} 
+                {"Champ": k, "Valeur": v, "Commentaire du reviewer": "", "Réponse de l'auditeur": ""} 
                 for k, v in profile_data.items()
             ])
-        profile_save_df.to_excel(writer, index=False, sheet_name="Profile_Work")
-
-        # Checklist with comments
+        
+        # Ensure communication columns exist
+        if "Commentaire du reviewer" not in profile_save_df.columns:
+            profile_save_df["Commentaire du reviewer"] = profile_save_df.get("Commentaire", "")
+        if "Réponse de l'auditeur" not in profile_save_df.columns:
+            profile_save_df["Réponse de l'auditeur"] = ""
+        
+        profile_save_df.to_excel(writer, index=False, sheet_name="Profile_Communication")
+        
+        # Format Profile sheet
+        profile_ws = writer.sheets["Profile_Communication"]
+        profile_ws.set_column('A:A', 25)  # Champ
+        profile_ws.set_column('B:B', 30)  # Valeur
+        profile_ws.set_column('C:C', 40)  # Commentaire reviewer
+        profile_ws.set_column('D:D', 40)  # Réponse auditeur
+        
+        # Apply formatting
+        for col_num, value in enumerate(profile_save_df.columns.values):
+            profile_ws.write(0, col_num, value, header_format)
+        
+        # Checklist with enhanced communication structure
         if edited_checklist is not None:
             checklist_save_df = edited_checklist.copy()
         else:
             checklist_save_df = pd.DataFrame(checklist_data)
-            checklist_save_df['Commentaire'] = ''
-        checklist_save_df.to_excel(writer, index=False, sheet_name="Checklist_Work")
+            checklist_save_df['Commentaire du reviewer'] = ''
+            checklist_save_df['Réponse de l\'auditeur'] = ''
+        
+        # Ensure communication columns exist
+        if "Commentaire du reviewer" not in checklist_save_df.columns:
+            checklist_save_df["Commentaire du reviewer"] = checklist_save_df.get("Commentaire", "")
+        if "Réponse de l'auditeur" not in checklist_save_df.columns:
+            checklist_save_df["Réponse de l'auditeur"] = ""
+        
+        checklist_save_df.to_excel(writer, index=False, sheet_name="Checklist_Communication")
+        
+        # Format Checklist sheet
+        checklist_ws = writer.sheets["Checklist_Communication"]
+        checklist_ws.set_column('A:A', 12)  # Num
+        checklist_ws.set_column('B:B', 8)   # Score
+        checklist_ws.set_column('C:C', 15)  # Chapitre
+        checklist_ws.set_column('D:D', 50)  # Explication
+        checklist_ws.set_column('E:E', 50)  # Explication détaillée
+        checklist_ws.set_column('F:F', 40)  # Commentaire reviewer
+        checklist_ws.set_column('G:G', 40)  # Réponse auditeur
+        if 'Réponse' in checklist_save_df.columns:
+            checklist_ws.set_column('H:H', 30)  # Réponse système
+        
+        # Apply formatting
+        for col_num, value in enumerate(checklist_save_df.columns.values):
+            checklist_ws.write(0, col_num, value, header_format)
 
-        # Non-conformities with comments and action plans
+        # Non-conformities with enhanced communication and action tracking
         if non_conformities:
             if edited_nc is not None:
                 nc_save_df = edited_nc.copy()
             else:
                 nc_save_df = pd.DataFrame(non_conformities)
-                nc_save_df['Commentaire'] = ''
-                nc_save_df['Plan d\'action'] = ''
-            nc_save_df.to_excel(writer, index=False, sheet_name="NonConformities_Work")
-
-        # Adjust column widths
-        for sheet_name in writer.sheets:
-            worksheet = writer.sheets[sheet_name]
-            for col in worksheet.columns:
-                max_length = 0
-                column = col[0].column_letter
-                for cell in col:
-                    try:
-                        if len(str(cell.value)) > max_length:
-                            max_length = len(str(cell.value))
-                    except:
-                        pass
-                adjusted_width = min((max_length + 2) * 1.2, 50)
-                worksheet.column_dimensions[column].width = adjusted_width
+                nc_save_df['Commentaire du reviewer'] = ''
+                nc_save_df['Plan d\'action proposé'] = ''
+                nc_save_df['Réponse de l\'auditeur'] = ''
+                nc_save_df['Actions mises en place'] = ''
+                nc_save_df['Date limite'] = ''
+                nc_save_df['Responsable'] = ''
+                nc_save_df['Statut'] = 'En attente'
+            
+            # Ensure all communication and tracking columns exist
+            communication_columns = [
+                "Commentaire du reviewer", "Plan d'action proposé", "Réponse de l'auditeur", 
+                "Actions mises en place", "Date limite", "Responsable", "Statut"
+            ]
+            
+            for col in communication_columns:
+                if col not in nc_save_df.columns:
+                    if col == "Statut":
+                        nc_save_df[col] = "En attente"
+                    else:
+                        nc_save_df[col] = ""
+            
+            nc_save_df.to_excel(writer, index=False, sheet_name="NonConformities_ActionPlan")
+            
+            # Format Non-conformities sheet
+            nc_ws = writer.sheets["NonConformities_ActionPlan"]
+            nc_ws.set_column('A:A', 12)  # Num
+            nc_ws.set_column('B:B', 8)   # Score
+            nc_ws.set_column('C:C', 15)  # Chapitre
+            nc_ws.set_column('D:D', 40)  # Explication
+            nc_ws.set_column('E:E', 40)  # Explication détaillée
+            nc_ws.set_column('F:F', 30)  # Réponse système
+            nc_ws.set_column('G:G', 35)  # Commentaire reviewer
+            nc_ws.set_column('H:H', 35)  # Plan d'action proposé
+            nc_ws.set_column('I:I', 35)  # Réponse auditeur
+            nc_ws.set_column('J:J', 35)  # Actions mises en place
+            nc_ws.set_column('K:K', 15)  # Date limite
+            nc_ws.set_column('L:L', 20)  # Responsable
+            nc_ws.set_column('M:M', 15)  # Statut
+            
+            # Apply formatting with color coding
+            for col_num, value in enumerate(nc_save_df.columns.values):
+                nc_ws.write(0, col_num, value, header_format)
 
     output.seek(0)
     return output, clean_company_name
 
-def load_work_from_excel(uploaded_file):
+def clean_dataframe_for_editor(df, required_columns):
+    """Clean and prepare DataFrame for st.data_editor"""
+    if df is None or df.empty:
+        return pd.DataFrame(columns=required_columns)
+    
+    # Ensure all required columns exist
+    for col in required_columns:
+        if col not in df.columns:
+            df[col] = ''
+    
+    # Clean data types and handle NaN values
+    for col in df.columns:
+        if col in required_columns:
+            # Convert to string and replace NaN with empty strings
+            df[col] = df[col].astype(str).fillna('').replace('nan', '').replace('None', '')
+    
+    # Reset index to avoid issues
+    df = df.reset_index(drop=True)
+    
+    return df[required_columns]  # Return only required columns in correct order
     """Load previously saved work from Excel"""
     try:
         # Read all sheets
@@ -334,25 +456,29 @@ if main_option == "Traitement des rapports IFS":
             if tab == "Profile":
                 st.subheader("Profile de l'entreprise")
                 
-                # Create DataFrame for profile with comments column
+                # Create DataFrame for profile with reviewer/auditor communication columns
                 profile_list = []
                 for field, value in profile_data.items():
                     profile_list.append({
                         "Champ": field,
                         "Valeur": str(value),
-                        "Commentaire": ""
+                        "Commentaire du reviewer": "",
+                        "Réponse de l'auditeur": ""
                     })
                 
                 profile_df = pd.DataFrame(profile_list)
                 
-                # Tableau éditable avec commentaires
-                st.write("**✏️ Profil de l'entreprise avec commentaires éditables**")
+                # Tableau éditable avec commentaires reviewer/auditeur
+                st.write("**✏️ Profil de l'entreprise - Communication reviewer/auditeur**")
+                st.info("💡 **Workflow:** Reviewer ajoute commentaires → Auditeur répond → Communication Excel")
+                
                 edited_profile_df = st.data_editor(
                     profile_df,
                     column_config={
                         "Champ": st.column_config.TextColumn("Champ", disabled=True, width="medium"),
                         "Valeur": st.column_config.TextColumn("Valeur", disabled=True, width="medium"),
-                        "Commentaire": st.column_config.TextColumn("Commentaire", width="large")
+                        "Commentaire du reviewer": st.column_config.TextColumn("📝 Commentaire du reviewer", width="large"),
+                        "Réponse de l'auditeur": st.column_config.TextColumn("💬 Réponse de l'auditeur", width="large")
                     },
                     hide_index=True,
                     use_container_width=True,
@@ -409,11 +535,12 @@ if main_option == "Traitement des rapports IFS":
                 
                 if filtered_checklist:
                     # Vue détaillée par défaut avec expandeurs ouverts
-                    st.write("**📋 Vue détaillée des exigences avec commentaires**")
-                    st.write("💡 *Conseil : Ajoutez vos commentaires puis refermez les expandeurs au fur et à mesure*")
+                    st.write("**📋 Vue détaillée des exigences - Communication reviewer/auditeur**")
+                    st.write("💡 *Workflow: Reviewer commente → Auditeur répond → Communication via Excel*")
                     
                     # Affichage avec expandeurs pour chaque exigence (OUVERTS par défaut)
-                    comments_dict = {}
+                    comments_reviewer_dict = {}
+                    comments_auditor_dict = {}
                     
                     for i, item in enumerate(filtered_checklist):
                         score_emoji = {"A": "✅", "B": "⚠️", "C": "🟠", "D": "🔴", "NA": "⚫"}.get(item['Score'], "❓")
@@ -433,17 +560,33 @@ if main_option == "Traitement des rapports IFS":
                                 st.write(f"**Score:** {item['Score']}")
                                 st.write(f"**Chapitre:** {item.get('Chapitre', 'N/A')}")
                             
-                            # Zone de commentaire pour chaque exigence
-                            comment_key = f"comment_detail_{item['Num']}"
-                            comment = st.text_area(
-                                "💬 Votre commentaire:",
-                                key=comment_key,
-                                height=100,
-                                placeholder="Ajoutez vos observations pour cette exigence..."
-                            )
-                            comments_dict[item['Num']] = comment
+                            # Communication reviewer/auditeur
+                            st.markdown("---")
+                            col_comm1, col_comm2 = st.columns(2)
+                            
+                            with col_comm1:
+                                # Zone de commentaire reviewer
+                                comment_reviewer_key = f"comment_reviewer_{item['Num']}"
+                                comment_reviewer = st.text_area(
+                                    "📝 Commentaire du reviewer:",
+                                    key=comment_reviewer_key,
+                                    height=80,
+                                    placeholder="Observations du reviewer pour cette exigence..."
+                                )
+                                comments_reviewer_dict[item['Num']] = comment_reviewer
+                            
+                            with col_comm2:
+                                # Zone de réponse auditeur
+                                comment_auditor_key = f"comment_auditor_{item['Num']}"
+                                comment_auditor = st.text_area(
+                                    "💬 Réponse de l'auditeur:",
+                                    key=comment_auditor_key,
+                                    height=80,
+                                    placeholder="Réponse de l'auditeur..."
+                                )
+                                comments_auditor_dict[item['Num']] = comment_auditor
                     
-                    # Reconstituer le DataFrame avec les commentaires
+                    # Reconstituer le DataFrame avec les commentaires de communication
                     checklist_list = []
                     for item in filtered_checklist:
                         row = {
@@ -452,7 +595,8 @@ if main_option == "Traitement des rapports IFS":
                             "Chapitre": item.get('Chapitre', 'N/A'),
                             "Explication": item['Explanation'],
                             "Explication détaillée": item['Detailed Explanation'],
-                            "Commentaire": comments_dict.get(item['Num'], "")
+                            "Commentaire du reviewer": comments_reviewer_dict.get(item['Num'], ""),
+                            "Réponse de l'auditeur": comments_auditor_dict.get(item['Num'], "")
                         }
                         if show_responses:
                             row["Réponse"] = item['Response']
@@ -721,21 +865,25 @@ elif main_option == "Reprendre un travail sauvegardé":
             if tab_work == "Profile" and 'profile' in work_data:
                 st.subheader("Profile de l'entreprise (travail repris)")
                 
-                # Ensure consistent DataFrame structure
-                work_profile_df = work_data['profile'].copy()
+                # Clean and prepare DataFrame for st.data_editor
+                required_profile_columns = ["Champ", "Valeur", "Commentaire du reviewer", "Réponse de l'auditeur"]
+                work_profile_df = clean_dataframe_for_editor(work_data['profile'], required_profile_columns)
                 
-                # Verify column structure
-                if 'Commentaire' not in work_profile_df.columns:
-                    work_profile_df['Commentaire'] = ''
+                # Handle legacy format (convert old "Commentaire" to "Commentaire du reviewer")
+                if "Commentaire" in work_data['profile'].columns and "Commentaire du reviewer" not in work_data['profile'].columns:
+                    work_profile_df["Commentaire du reviewer"] = work_data['profile']['Commentaire']
                 
                 # SAME DESIGN as normal Profile tab
-                st.write("**✏️ Profil de l'entreprise avec commentaires éditables**")
+                st.write("**✏️ Profil de l'entreprise - Communication reviewer/auditeur (travail repris)**")
+                st.info("💡 **Workflow repris:** Modifiez les commentaires → Continuez la communication")
+                
                 edited_profile_work = st.data_editor(
                     work_profile_df,
                     column_config={
                         "Champ": st.column_config.TextColumn("Champ", disabled=True, width="medium"),
                         "Valeur": st.column_config.TextColumn("Valeur", disabled=True, width="medium"),
-                        "Commentaire": st.column_config.TextColumn("Commentaire", width="large")
+                        "Commentaire du reviewer": st.column_config.TextColumn("📝 Commentaire du reviewer", width="large"),
+                        "Réponse de l'auditeur": st.column_config.TextColumn("💬 Réponse de l'auditeur", width="large")
                     },
                     hide_index=True,
                     use_container_width=True,
@@ -933,31 +1081,56 @@ elif main_option == "Reprendre un travail sauvegardé":
                     with st.spinner("Génération de la sauvegarde mise à jour..."):
                         output = BytesIO()
                         
-                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        with pd.ExcelWriter(output, engine='xlsxwriter', options={'strings_to_urls': False}) as writer:
+                            workbook = writer.book
+                            
+                            # Use same professional formatting
+                            header_format = workbook.add_format({
+                                'bold': True,
+                                'text_wrap': True,
+                                'valign': 'top',
+                                'fg_color': '#4472C4',
+                                'font_color': 'white',
+                                'border': 1,
+                                'font_size': 11
+                            })
+                            
                             # Metadata
                             metadata = pd.DataFrame({
                                 "Type": ["IFS_WORK_SAVE"],
                                 "COID": ["travail_repris"],
                                 "Company_Name": ["travail_modifie"],
-                                "Date": [pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")]
+                                "Date": [pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")],
+                                "Purpose": ["Communication Reviewer/Auditeur - Mise à jour"]
                             })
                             metadata.to_excel(writer, index=False, sheet_name="METADATA")
                             
-                            # Save updated work
+                            # Save updated work with new sheet names
                             if 'edited_profile_work' in st.session_state:
-                                st.session_state['edited_profile_work'].to_excel(writer, index=False, sheet_name="Profile_Work")
+                                st.session_state['edited_profile_work'].to_excel(writer, index=False, sheet_name="Profile_Communication")
                             elif 'profile' in work_data:
-                                work_data['profile'].to_excel(writer, index=False, sheet_name="Profile_Work")
+                                work_data['profile'].to_excel(writer, index=False, sheet_name="Profile_Communication")
                             
                             if 'edited_checklist_work' in st.session_state:
-                                st.session_state['edited_checklist_work'].to_excel(writer, index=False, sheet_name="Checklist_Work")
+                                st.session_state['edited_checklist_work'].to_excel(writer, index=False, sheet_name="Checklist_Communication")
                             elif 'checklist' in work_data:
-                                work_data['checklist'].to_excel(writer, index=False, sheet_name="Checklist_Work")
+                                work_data['checklist'].to_excel(writer, index=False, sheet_name="Checklist_Communication")
                             
                             if 'edited_nc_work' in st.session_state:
-                                st.session_state['edited_nc_work'].to_excel(writer, index=False, sheet_name="NonConformities_Work")
+                                st.session_state['edited_nc_work'].to_excel(writer, index=False, sheet_name="NonConformities_ActionPlan")
                             elif 'nc' in work_data:
-                                work_data['nc'].to_excel(writer, index=False, sheet_name="NonConformities_Work")
+                                work_data['nc'].to_excel(writer, index=False, sheet_name="NonConformities_ActionPlan")
+                            
+                            # Apply formatting to headers
+                            for sheet_name in ["Profile_Communication", "Checklist_Communication", "NonConformities_ActionPlan"]:
+                                if sheet_name in writer.sheets:
+                                    worksheet = writer.sheets[sheet_name]
+                                    # Format headers
+                                    for col_num in range(10):  # Assume max 10 columns
+                                        try:
+                                            worksheet.write(0, col_num, worksheet.cell(0, col_num).value, header_format)
+                                        except:
+                                            break
                         
                         output.seek(0)
                     
