@@ -1,4 +1,121 @@
-import json
+# Use xlsxwriter for final export (better performance and formatting)
+                    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                        # Profile tab
+                        if 'edited_profile' in st.session_state:
+                            profile_export_df = st.session_state['edited_profile']
+                        else:
+                            profile_export_df = pd.DataFrame([
+                                {"Champ": k, "Valeur": v, "Commentaire du reviewer": "", "Réponse de l'auditeur": ""} 
+                                for k, v in profile_data.items()
+                            ])
+                        
+                        profile_export_df.to_excel(writer, index=False, sheet_name="Profile")
+
+                        # Checklist tab
+                        if 'edited_checklist' in st.session_state:
+                            checklist_export_df = st.session_state['edited_checklist']
+                        else:
+                            checklist_export_df = pd.DataFrame(checklist_data)
+                            checklist_export_df['Commentaire du reviewer'] = ''
+                            checklist_export_df['Réponse de l\'auditeur'] = ''
+                        
+                        checklist_export_df.to_excel(writer, index=False, sheet_name="Checklist")
+
+                        # Non-conformities tab
+                        if non_conformities:
+                            if 'edited_nc' in st.session_state:
+                                nc_export_df = st.session_state['edited_nc']
+                            else:
+                                nc_export_df = pd.DataFrame(non_conformities)
+                                nc_export_df['Commentaire du reviewer'] = ''
+                                nc_export_df['Réponse de l\'auditeur'] = ''
+                                nc_export_df['Plan d\'action proposé'] = ''
+                                nc_export_df['Actions mises en place'] = ''
+                                nc_export_df['Date limite'] = ''
+                                nc_export_df['Responsable'] = ''
+                                nc_export_df['Statut'] = 'En attente'
+                            
+                            nc_export_df.to_excel(writer, index=False, sheet_name="Non-conformities")
+
+                        # Enhanced formatting with xlsxwriter
+                        workbook = writer.book
+                        
+                        # Define formats
+                        header_format = workbook.add_format({
+                            'bold': True,
+                            'text_wrap': True,
+                            'valign': 'top',
+                            'fg_color': '#D7E4BC',
+                            'border': 1
+                        })
+                        
+                        cell_format = workbook.add_format({
+                            'text_wrap': True,
+                            'valign': 'top',
+                            'border': 1
+                        })
+                        
+                        # Apply formatting and adjust column widths for all sheets
+                        for sheet_name in writer.sheets:
+                            worksheet = writer.sheets[sheet_name]
+                            
+                            # Get the dataframe for this sheet to know the number of columns
+                            if sheet_name == "Profile":
+                                df = profile_export_df
+                            elif sheet_name == "Checklist":
+                                df = checklist_export_df
+                            elif sheet_name == "Non-conformities" and non_conformities:
+                                df = nc_export_df
+                            else:
+                                continue
+                            
+                            # Format headers
+                            for col_num, value in enumerate(df.columns.values):
+                                worksheet.write(0, col_num, value, header_format)
+                            
+                            # Set column widths and wrap text
+                            for col_num, col_name in enumerate(df.columns):
+                                # Calculate optimal width
+                                max_len = max(
+                                    df[col_name].astype(str).map(len).max(),  # Max length in column
+                                    len(str(col_name))  # Header length
+                                )
+                                
+                                # Set width with limits
+                                if col_name in ['Commentaire du reviewer', 'Réponse de l\'auditeur', 'Plan d\'action proposé', 'Actions mises en place', 'Explication', 'Explication détaillée', 'Réponse']:
+                                    worksheet.set_column(col_num, col_num, min(50, max(20, max_len)))
+                                else:
+                                    worksheet.set_column(col_num, col_num, min(30, max(10, max_len)))
+                            
+                            # Apply cell formatting to data rows
+                            for row_num in range(1, len(df) + 1):
+                                for col_num in range(len(df.columns)):
+                                    worksheet.write(row_num, col_num, df.iloc[row_num-1, col_num], cell_format)
+
+                    # Reset the position of the output to the start
+                    output.seek(0)
+                
+                st.sidebar.success("📊 Rapport final généré !")
+                
+                # Create filename with company name
+                company_name = profile_data.get("Nom du site à auditer", "entreprise_inconnue")
+                clean_company_name = re.sub(r'[^\w\s-]', '', company_name).strip()
+                clean_company_name = re.sub(r'[-\s]+', '_', clean_company_name)
+                final_filename = f'rapport_final_IFS_{numero_coid}_{clean_company_name}.xlsx'
+                
+                # Provide the download button with the COID number in the filename
+                st.sidebar.download_button(
+                    label="📥 Télécharger rapport",
+                    data=output,
+                    file_name=final_filename,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="download_final_btn"
+                )
+
+            # Create tabs for Profile, Checklist, and Non-conformities
+            tab = st.radio("Sélectionnez un onglet:", ["Profile", "Checklist", "Non-conformities"])
+
+            if tab == "Profile":import json
 import pandas as pd
 import streamlit as st
 from io import BytesIO
@@ -137,7 +254,7 @@ def save_work_to_excel(profile_data, checklist_data, non_conformities, edited_pr
     clean_company_name = re.sub(r'[-\s]+', '_', clean_company_name)
     
     # Use xlsxwriter for better formatting in communication files
-    with pd.ExcelWriter(output, engine='xlsxwriter', options={'strings_to_urls': False}) as writer:
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         workbook = writer.book
         
         # Define professional formats for reviewer/auditor communication
@@ -251,8 +368,8 @@ def save_work_to_excel(profile_data, checklist_data, non_conformities, edited_pr
             else:
                 nc_save_df = pd.DataFrame(non_conformities)
                 nc_save_df['Commentaire du reviewer'] = ''
-                nc_save_df['Plan d\'action proposé'] = ''
                 nc_save_df['Réponse de l\'auditeur'] = ''
+                nc_save_df['Plan d\'action proposé'] = ''
                 nc_save_df['Actions mises en place'] = ''
                 nc_save_df['Date limite'] = ''
                 nc_save_df['Responsable'] = ''
@@ -260,7 +377,7 @@ def save_work_to_excel(profile_data, checklist_data, non_conformities, edited_pr
             
             # Ensure all communication and tracking columns exist
             communication_columns = [
-                "Commentaire du reviewer", "Plan d'action proposé", "Réponse de l'auditeur", 
+                "Commentaire du reviewer", "Réponse de l'auditeur", "Plan d'action proposé", 
                 "Actions mises en place", "Date limite", "Responsable", "Statut"
             ]
             
@@ -273,7 +390,7 @@ def save_work_to_excel(profile_data, checklist_data, non_conformities, edited_pr
             
             nc_save_df.to_excel(writer, index=False, sheet_name="NonConformities_ActionPlan")
             
-            # Format Non-conformities sheet
+            # Format Non-conformities sheet with proper column order
             nc_ws = writer.sheets["NonConformities_ActionPlan"]
             nc_ws.set_column('A:A', 12)  # Num
             nc_ws.set_column('B:B', 8)   # Score
@@ -282,8 +399,8 @@ def save_work_to_excel(profile_data, checklist_data, non_conformities, edited_pr
             nc_ws.set_column('E:E', 40)  # Explication détaillée
             nc_ws.set_column('F:F', 30)  # Réponse système
             nc_ws.set_column('G:G', 35)  # Commentaire reviewer
-            nc_ws.set_column('H:H', 35)  # Plan d'action proposé
-            nc_ws.set_column('I:I', 35)  # Réponse auditeur
+            nc_ws.set_column('H:H', 35)  # Réponse auditeur
+            nc_ws.set_column('I:I', 35)  # Plan d'action proposé
             nc_ws.set_column('J:J', 35)  # Actions mises en place
             nc_ws.set_column('K:K', 15)  # Date limite
             nc_ws.set_column('L:L', 20)  # Responsable
@@ -450,10 +567,52 @@ if main_option == "Traitement des rapports IFS":
             st.session_state['current_checklist_data'] = checklist_data
             st.session_state['current_non_conformities'] = non_conformities
 
-            # Create tabs for Profile, Checklist, and Non-conformities
-            tab = st.radio("Sélectionnez un onglet:", ["Profile", "Checklist", "Non-conformities"])
-
-            if tab == "Profile":
+            # Work save and export options in SIDEBAR
+            st.sidebar.markdown("---")
+            st.sidebar.markdown("### 💾 Sauvegarde et Export")
+            
+            # Sauvegarde du travail
+            st.sidebar.write("**💾 Sauvegarde travail**")
+            st.sidebar.write("*Pour reprendre plus tard*")
+            if st.sidebar.button("💾 Générer la sauvegarde", type="secondary", key="save_work_btn"):
+                numero_coid = profile_data.get("N° COID du portail", "inconnu")
+                
+                with st.spinner("Génération de la sauvegarde..."):
+                    work_file, clean_company_name = save_work_to_excel(
+                        profile_data, 
+                        checklist_data, 
+                        non_conformities,
+                        st.session_state.get('edited_profile'),
+                        st.session_state.get('edited_checklist'),
+                        st.session_state.get('edited_nc'),
+                        numero_coid
+                    )
+                
+                date_str = datetime.now().strftime("%Y%m%d_%H%M")
+                work_filename = f"travail_IFS_{numero_coid}_{clean_company_name}_{date_str}.xlsx"
+                
+                st.sidebar.success("💾 Sauvegarde générée !")
+                st.sidebar.download_button(
+                    label="📥 Télécharger sauvegarde",
+                    data=work_file,
+                    file_name=work_filename,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    help="Fichier Excel contenant tous vos commentaires pour reprendre plus tard",
+                    key="download_work_btn"
+                )
+            
+            # Export rapport final
+            st.sidebar.write("**📊 Rapport final**")
+            st.sidebar.write("*Pour présentation*")
+            if st.sidebar.button("📊 Générer le rapport", type="primary", key="export_final_btn"):
+                numero_coid = profile_data.get("N° COID du portail", "inconnu")
+                
+                with st.spinner("Génération du rapport final..."):
+                    # Create the Excel file with xlswriter for better performance and formatting
+                    output = BytesIO()
+                    
+                    # Use xlsxwriter for final export (better performance and formatting)
+                    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 st.subheader("Profile de l'entreprise")
                 
                 # Create DataFrame for profile with reviewer/auditor communication columns
@@ -723,7 +882,7 @@ if main_option == "Traitement des rapports IFS":
                         output = BytesIO()
                         
                         # Use xlsxwriter for final export (better performance and formatting)
-                        with pd.ExcelWriter(output, engine='xlsxwriter', options={'strings_to_urls': False}) as writer:
+                        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                             # Profile tab
                             if 'edited_profile' in st.session_state:
                                 profile_export_df = st.session_state['edited_profile']
@@ -899,9 +1058,15 @@ elif main_option == "Reprendre un travail sauvegardé":
                 # Ensure consistent DataFrame structure
                 work_checklist_df = work_data['checklist'].copy()
                 
-                # Verify column structure
-                if 'Commentaire' not in work_checklist_df.columns:
-                    work_checklist_df['Commentaire'] = ''
+                # Verify column structure for reviewer/auditor communication
+                if "Commentaire du reviewer" not in work_checklist_df.columns:
+                    if "Commentaire" in work_checklist_df.columns:
+                        work_checklist_df["Commentaire du reviewer"] = work_checklist_df["Commentaire"]
+                    else:
+                        work_checklist_df["Commentaire du reviewer"] = ""
+                
+                if "Réponse de l'auditeur" not in work_checklist_df.columns:
+                    work_checklist_df["Réponse de l'auditeur"] = ""
                 
                 # SAME FILTERS as normal Checklist tab
                 col1, col2, col3, col4 = st.columns(4)
@@ -947,11 +1112,12 @@ elif main_option == "Reprendre un travail sauvegardé":
                 
                 if len(filtered_work_checklist) > 0:
                     # SAME DETAILED VIEW as normal Checklist tab
-                    st.write("**📋 Vue détaillée des exigences avec commentaires**")
-                    st.write("💡 *Conseil : Modifiez vos commentaires puis refermez les expandeurs au fur et à mesure*")
+                    st.write("**📋 Vue détaillée des exigences - Communication reviewer/auditeur (travail repris)**")
+                    st.write("💡 *Modifiez les commentaires et réponses pour continuer la communication*")
                     
-                    # Expandeurs avec commentaires
-                    comments_work_dict = {}
+                    # Expandeurs avec commentaires reviewer/auditeur
+                    comments_work_reviewer_dict = {}
+                    comments_work_auditor_dict = {}
                     
                     for i, row in filtered_work_checklist.iterrows():
                         score_emoji = {"A": "✅", "B": "⚠️", "C": "🟠", "D": "🔴", "NA": "⚫"}.get(row['Score'], "❓")
@@ -972,22 +1138,42 @@ elif main_option == "Reprendre un travail sauvegardé":
                                 if 'Chapitre' in row:
                                     st.write(f"**Chapitre:** {row['Chapitre']}")
                             
-                            # Zone de commentaire avec valeur existante
-                            comment_key_work = f"comment_work_{row['Num']}"
-                            existing_comment = row.get('Commentaire', '') if pd.notna(row.get('Commentaire', '')) else ''
-                            comment_work = st.text_area(
-                                "💬 Votre commentaire:",
-                                value=existing_comment,
-                                key=comment_key_work,
-                                height=100,
-                                placeholder="Modifiez vos observations pour cette exigence..."
-                            )
-                            comments_work_dict[row['Num']] = comment_work
+                            # Communication reviewer/auditeur avec valeurs existantes
+                            st.markdown("---")
+                            col_comm1, col_comm2 = st.columns(2)
+                            
+                            with col_comm1:
+                                # Zone de commentaire reviewer avec valeur existante
+                                comment_reviewer_key_work = f"comment_work_reviewer_{row['Num']}"
+                                existing_reviewer_comment = row.get('Commentaire du reviewer', '') if pd.notna(row.get('Commentaire du reviewer', '')) else ''
+                                comment_reviewer_work = st.text_area(
+                                    "📝 Commentaire du reviewer:",
+                                    value=existing_reviewer_comment,
+                                    key=comment_reviewer_key_work,
+                                    height=80,
+                                    placeholder="Modifiez les observations du reviewer..."
+                                )
+                                comments_work_reviewer_dict[row['Num']] = comment_reviewer_work
+                            
+                            with col_comm2:
+                                # Zone de réponse auditeur avec valeur existante
+                                comment_auditor_key_work = f"comment_work_auditor_{row['Num']}"
+                                existing_auditor_comment = row.get('Réponse de l\'auditeur', '') if pd.notna(row.get('Réponse de l\'auditeur', '')) else ''
+                                comment_auditor_work = st.text_area(
+                                    "💬 Réponse de l'auditeur:",
+                                    value=existing_auditor_comment,
+                                    key=comment_auditor_key_work,
+                                    height=80,
+                                    placeholder="Modifiez la réponse de l'auditeur..."
+                                )
+                                comments_work_auditor_dict[row['Num']] = comment_auditor_work
                     
                     # Update DataFrame with modified comments
                     for index, row in filtered_work_checklist.iterrows():
-                        if row['Num'] in comments_work_dict:
-                            work_checklist_df.loc[work_checklist_df['Num'] == row['Num'], 'Commentaire'] = comments_work_dict[row['Num']]
+                        if row['Num'] in comments_work_reviewer_dict:
+                            work_checklist_df.loc[work_checklist_df['Num'] == row['Num'], 'Commentaire du reviewer'] = comments_work_reviewer_dict[row['Num']]
+                        if row['Num'] in comments_work_auditor_dict:
+                            work_checklist_df.loc[work_checklist_df['Num'] == row['Num'], 'Réponse de l\'auditeur'] = comments_work_auditor_dict[row['Num']]
                     
                     st.session_state['edited_checklist_work'] = work_checklist_df
                 else:
@@ -999,18 +1185,36 @@ elif main_option == "Reprendre un travail sauvegardé":
                 # Ensure consistent DataFrame structure
                 work_nc_df = work_data['nc'].copy()
                 
-                # Verify column structure
-                if 'Commentaire' not in work_nc_df.columns:
-                    work_nc_df['Commentaire'] = ''
-                if 'Plan d\'action' not in work_nc_df.columns:
-                    work_nc_df['Plan d\'action'] = ''
+                # Verify column structure for reviewer/auditor communication
+                required_nc_columns = [
+                    'Commentaire du reviewer', 'Réponse de l\'auditeur', 'Plan d\'action proposé', 
+                    'Actions mises en place', 'Date limite', 'Responsable', 'Statut'
+                ]
+                
+                for col in required_nc_columns:
+                    if col not in work_nc_df.columns:
+                        if col == "Statut":
+                            work_nc_df[col] = "En attente"
+                        else:
+                            work_nc_df[col] = ""
+                
+                # Handle legacy format (convert old "Commentaire" and "Plan d'action")
+                if "Commentaire" in work_nc_df.columns and "Commentaire du reviewer" not in work_nc_df.columns:
+                    work_nc_df["Commentaire du reviewer"] = work_nc_df['Commentaire']
+                if "Plan d'action" in work_nc_df.columns and "Plan d'action proposé" not in work_nc_df.columns:
+                    work_nc_df["Plan d'action proposé"] = work_nc_df["Plan d'action"]
                 
                 if len(work_nc_df) > 0:
                     st.warning(f"**{len(work_nc_df)} non-conformité(s) en cours de traitement** (scores B, C, D uniquement)")
                     
-                    # SAME DETAILED VIEW as normal NC tab
-                    nc_work_comments = {}
-                    nc_work_actions = {}
+                    # SAME DETAILED VIEW as normal NC tab with reviewer/auditor communication
+                    nc_work_reviewer_comments = {}
+                    nc_work_auditor_responses = {}
+                    nc_work_action_plans = {}
+                    nc_work_implemented = {}
+                    nc_work_deadlines = {}
+                    nc_work_responsibles = {}
+                    nc_work_status = {}
                     
                     for index, row in work_nc_df.iterrows():
                         score_emoji = {"B": "⚠️", "C": "🟠", "D": "🔴"}.get(row['Score'], "❓")
@@ -1024,7 +1228,7 @@ elif main_option == "Reprendre un travail sauvegardé":
                                 st.markdown(f"**📖 Explication:** {row['Explication']}")
                                 st.markdown(f"**📋 Explication détaillée:** {row['Explication détaillée']}")
                                 if 'Réponse' in row:
-                                    st.markdown(f"**💬 Réponse:** {row['Réponse']}")
+                                    st.markdown(f"**💬 Réponse système:** {row['Réponse']}")
                             
                             with col_nc2:
                                 st.markdown(f"**N°:** {row['Num']}")
@@ -1032,39 +1236,131 @@ elif main_option == "Reprendre un travail sauvegardé":
                                 if 'Chapitre' in row:
                                     st.markdown(f"**Chapitre:** {row['Chapitre']}")
                             
-                            # Zone de commentaires et plan d'action avec valeurs existantes
+                            # Communication reviewer/auditeur avec valeurs existantes
+                            st.markdown("---")
+                            col_comm1, col_comm2 = st.columns(2)
+                            
+                            with col_comm1:
+                                # Commentaire reviewer
+                                comment_reviewer_key = f"nc_work_reviewer_{row['Num']}"
+                                existing_reviewer_comment = row.get('Commentaire du reviewer', '') if pd.notna(row.get('Commentaire du reviewer', '')) else ''
+                                reviewer_comment = st.text_area(
+                                    "📝 Commentaire du reviewer:",
+                                    value=existing_reviewer_comment,
+                                    key=comment_reviewer_key,
+                                    height=100,
+                                    placeholder="Observations du reviewer..."
+                                )
+                                nc_work_reviewer_comments[row['Num']] = reviewer_comment
+                            
+                            with col_comm2:
+                                # Réponse auditeur
+                                auditor_response_key = f"nc_work_auditor_{row['Num']}"
+                                existing_auditor_response = row.get('Réponse de l\'auditeur', '') if pd.notna(row.get('Réponse de l\'auditeur', '')) else ''
+                                auditor_response = st.text_area(
+                                    "💬 Réponse de l'auditeur:",
+                                    value=existing_auditor_response,
+                                    key=auditor_response_key,
+                                    height=100,
+                                    placeholder="Réponse de l'auditeur..."
+                                )
+                                nc_work_auditor_responses[row['Num']] = auditor_response
+                            
+                            # Plan d'action et suivi
+                            st.markdown("**🎯 Plan d'action et suivi**")
                             col_action1, col_action2 = st.columns(2)
                             
                             with col_action1:
-                                comment_key_nc = f"nc_work_comment_{row['Num']}"
-                                existing_comment_nc = row.get('Commentaire', '') if pd.notna(row.get('Commentaire', '')) else ''
-                                comment_nc = st.text_area(
-                                    "💬 Commentaire de l'auditeur:",
-                                    value=existing_comment_nc,
-                                    key=comment_key_nc,
-                                    height=120,
-                                    placeholder="Observations, causes identifiées, éléments de preuve..."
+                                # Plan d'action proposé
+                                action_plan_key = f"nc_work_plan_{row['Num']}"
+                                existing_plan = row.get('Plan d\'action proposé', '') if pd.notna(row.get('Plan d\'action proposé', '')) else ''
+                                action_plan = st.text_area(
+                                    "📋 Plan d'action proposé:",
+                                    value=existing_plan,
+                                    key=action_plan_key,
+                                    height=80,
+                                    placeholder="Plan d'action proposé..."
                                 )
-                                nc_work_comments[row['Num']] = comment_nc
+                                nc_work_action_plans[row['Num']] = action_plan
                             
                             with col_action2:
-                                action_key_nc = f"nc_work_action_{row['Num']}"
-                                existing_action_nc = row.get('Plan d\'action', '') if pd.notna(row.get('Plan d\'action', '')) else ''
-                                action_nc = st.text_area(
-                                    "🎯 Plan d'action corrective:",
-                                    value=existing_action_nc,
-                                    key=action_key_nc,
-                                    height=120,
-                                    placeholder="Actions à mettre en place, responsable, échéance..."
+                                # Actions mises en place
+                                implemented_key = f"nc_work_implemented_{row['Num']}"
+                                existing_implemented = row.get('Actions mises en place', '') if pd.notna(row.get('Actions mises en place', '')) else ''
+                                implemented = st.text_area(
+                                    "✅ Actions mises en place:",
+                                    value=existing_implemented,
+                                    key=implemented_key,
+                                    height=80,
+                                    placeholder="Actions réalisées..."
                                 )
-                                nc_work_actions[row['Num']] = action_nc
+                                nc_work_implemented[row['Num']] = implemented
+                            
+                            # Suivi
+                            col_track1, col_track2, col_track3 = st.columns(3)
+                            
+                            with col_track1:
+                                deadline_key = f"nc_work_deadline_{row['Num']}"
+                                existing_deadline = row.get('Date limite', '')
+                                if existing_deadline and existing_deadline != '':
+                                    try:
+                                        deadline_value = pd.to_datetime(existing_deadline).date()
+                                    except:
+                                        deadline_value = None
+                                else:
+                                    deadline_value = None
+                                
+                                deadline = st.date_input(
+                                    "📅 Date limite:",
+                                    value=deadline_value,
+                                    key=deadline_key
+                                )
+                                nc_work_deadlines[row['Num']] = deadline.strftime("%Y-%m-%d") if deadline else ""
+                            
+                            with col_track2:
+                                responsible_key = f"nc_work_responsible_{row['Num']}"
+                                existing_responsible = row.get('Responsable', '') if pd.notna(row.get('Responsable', '')) else ''
+                                responsible = st.text_input(
+                                    "👤 Responsable:",
+                                    value=existing_responsible,
+                                    key=responsible_key,
+                                    placeholder="Nom du responsable"
+                                )
+                                nc_work_responsibles[row['Num']] = responsible
+                            
+                            with col_track3:
+                                status_key = f"nc_work_status_{row['Num']}"
+                                existing_status = row.get('Statut', 'En attente') if pd.notna(row.get('Statut', '')) else 'En attente'
+                                status_options = ["En attente", "En cours", "Terminé", "Reporté", "Annulé"]
+                                try:
+                                    status_index = status_options.index(existing_status)
+                                except:
+                                    status_index = 0
+                                
+                                status = st.selectbox(
+                                    "📈 Statut:",
+                                    status_options,
+                                    index=status_index,
+                                    key=status_key
+                                )
+                                nc_work_status[row['Num']] = status
                     
-                    # Update DataFrame with modified comments and actions
+                    # Update DataFrame with all modifications
                     for index, row in work_nc_df.iterrows():
-                        if row['Num'] in nc_work_comments:
-                            work_nc_df.loc[index, 'Commentaire'] = nc_work_comments[row['Num']]
-                        if row['Num'] in nc_work_actions:
-                            work_nc_df.loc[index, 'Plan d\'action'] = nc_work_actions[row['Num']]
+                        if row['Num'] in nc_work_reviewer_comments:
+                            work_nc_df.loc[index, 'Commentaire du reviewer'] = nc_work_reviewer_comments[row['Num']]
+                        if row['Num'] in nc_work_auditor_responses:
+                            work_nc_df.loc[index, 'Réponse de l\'auditeur'] = nc_work_auditor_responses[row['Num']]
+                        if row['Num'] in nc_work_action_plans:
+                            work_nc_df.loc[index, 'Plan d\'action proposé'] = nc_work_action_plans[row['Num']]
+                        if row['Num'] in nc_work_implemented:
+                            work_nc_df.loc[index, 'Actions mises en place'] = nc_work_implemented[row['Num']]
+                        if row['Num'] in nc_work_deadlines:
+                            work_nc_df.loc[index, 'Date limite'] = nc_work_deadlines[row['Num']]
+                        if row['Num'] in nc_work_responsibles:
+                            work_nc_df.loc[index, 'Responsable'] = nc_work_responsibles[row['Num']]
+                        if row['Num'] in nc_work_status:
+                            work_nc_df.loc[index, 'Statut'] = nc_work_status[row['Num']]
                     
                     st.session_state['edited_nc_work'] = work_nc_df
                 else:
