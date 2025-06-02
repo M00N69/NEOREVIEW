@@ -40,8 +40,50 @@ def extract_from_flattened(flattened_data, mapping, selected_fields):
     extracted_data = {}
     for label, flat_path in mapping.items():
         if label in selected_fields:
-            extracted_data[label] = flattened_data.get(flat_path, 'N/A')
+            value = flattened_data.get(flat_path, 'N/A')
+            # Convert complex types to strings for Excel compatibility
+            if isinstance(value, (dict, list)):
+                extracted_data[label] = str(value) if value else 'N/A'
+            elif value is None:
+                extracted_data[label] = 'N/A'
+            else:
+                extracted_data[label] = str(value)
     return extracted_data
+
+def safe_extract_value(data, default='N/A'):
+    """Extrait une valeur de manière sécurisée pour Excel"""
+    if data is None:
+        return default
+    elif isinstance(data, (dict, list)):
+        if isinstance(data, dict) and len(data) == 1:
+            # Si c'est un dict avec une seule clé, prendre la valeur
+            return str(list(data.values())[0])
+        elif isinstance(data, list) and len(data) == 1:
+            # Si c'est une liste avec un seul élément, prendre cet élément
+            return str(data[0])
+        else:
+            # Sinon convertir en string
+            return str(data)
+    else:
+        return str(data)
+
+def clean_dataframe_for_excel(df):
+    """Nettoie un DataFrame pour qu'il soit compatible avec Excel"""
+    if df is None or df.empty:
+        return df
+    
+    # Copy to avoid modifying original
+    df_clean = df.copy()
+    
+    # Clean all columns
+    for col in df_clean.columns:
+        df_clean[col] = df_clean[col].apply(lambda x: 
+            str(x) if isinstance(x, (dict, list)) else
+            "" if pd.isna(x) or x is None else
+            str(x)
+        )
+    
+    return df_clean
 
 def clean_dataframe_for_editor(df, required_columns):
     """Clean and prepare DataFrame for st.data_editor"""
@@ -56,7 +98,8 @@ def clean_dataframe_for_editor(df, required_columns):
     # Clean data types and handle NaN values
     for col in df.columns:
         if col in required_columns:
-            # Convert to string and replace NaN with empty strings
+            # Convert complex types to strings and replace NaN with empty strings
+            df[col] = df[col].apply(lambda x: str(x) if isinstance(x, (dict, list)) else x)
             df[col] = df[col].astype(str).fillna('').replace('nan', '').replace('None', '')
     
     # Reset index to avoid issues
@@ -221,12 +264,13 @@ def save_work_to_excel(profile_data, checklist_data, non_conformities, edited_pr
         
         # Profile with enhanced communication structure
         if edited_profile is not None:
-            profile_save_df = edited_profile.copy()
+            profile_save_df = clean_dataframe_for_excel(edited_profile.copy())
         else:
             profile_save_df = pd.DataFrame([
-                {"Champ": k, "Valeur": v, "Commentaire du reviewer": "", "Réponse de l'auditeur": ""} 
+                {"Champ": k, "Valeur": str(v), "Commentaire du reviewer": "", "Réponse de l'auditeur": ""} 
                 for k, v in profile_data.items()
             ])
+            profile_save_df = clean_dataframe_for_excel(profile_save_df)
         
         # Ensure communication columns exist
         if "Commentaire du reviewer" not in profile_save_df.columns:
@@ -249,9 +293,9 @@ def save_work_to_excel(profile_data, checklist_data, non_conformities, edited_pr
         
         # Checklist with enhanced communication structure
         if edited_checklist is not None:
-            checklist_save_df = edited_checklist.copy()
+            checklist_save_df = clean_dataframe_for_excel(edited_checklist.copy())
         else:
-            checklist_save_df = pd.DataFrame(checklist_data)
+            checklist_save_df = clean_dataframe_for_excel(pd.DataFrame(checklist_data))
             checklist_save_df['Commentaire du reviewer'] = ''
             checklist_save_df['Réponse de l\'auditeur'] = ''
         
@@ -282,9 +326,9 @@ def save_work_to_excel(profile_data, checklist_data, non_conformities, edited_pr
         # Non-conformities with enhanced communication and action tracking
         if non_conformities:
             if edited_nc is not None:
-                nc_save_df = edited_nc.copy()
+                nc_save_df = clean_dataframe_for_excel(edited_nc.copy())
             else:
-                nc_save_df = pd.DataFrame(non_conformities)
+                nc_save_df = clean_dataframe_for_excel(pd.DataFrame(non_conformities))
                 nc_save_df['Commentaire du reviewer'] = ''
                 nc_save_df['Réponse de l\'auditeur'] = ''
                 nc_save_df['Plan d\'action proposé'] = ''
@@ -427,19 +471,23 @@ def create_final_report_excel(profile_df, checklist_df, nc_df, is_from_work=Fals
         # Create summary dashboard first
         summary_df = generate_audit_summary(checklist_df, nc_df, profile_df)
         if not summary_df.empty:
+            summary_df = clean_dataframe_for_excel(summary_df)
             summary_df.to_excel(writer, index=False, sheet_name="Résumé_Audit")
         
         # Profile sheet
         if not profile_df.empty:
-            profile_df.to_excel(writer, index=False, sheet_name="Profile")
+            profile_clean = clean_dataframe_for_excel(profile_df)
+            profile_clean.to_excel(writer, index=False, sheet_name="Profile")
 
         # Checklist sheet
         if not checklist_df.empty:
-            checklist_df.to_excel(writer, index=False, sheet_name="Checklist")
+            checklist_clean = clean_dataframe_for_excel(checklist_df)
+            checklist_clean.to_excel(writer, index=False, sheet_name="Checklist")
 
         # Non-conformities sheet
         if not nc_df.empty:
-            nc_df.to_excel(writer, index=False, sheet_name="Non-conformities")
+            nc_clean = clean_dataframe_for_excel(nc_df)
+            nc_clean.to_excel(writer, index=False, sheet_name="Non-conformities")
 
         # Apply enhanced formatting to all sheets
         for sheet_name in writer.sheets:
@@ -447,11 +495,11 @@ def create_final_report_excel(profile_df, checklist_df, nc_df, is_from_work=Fals
             
             # Get the dataframe for this sheet
             if sheet_name == "Profile":
-                df = profile_df
+                df = profile_clean if not profile_df.empty else pd.DataFrame()
             elif sheet_name == "Checklist":
-                df = checklist_df
+                df = checklist_clean if not checklist_df.empty else pd.DataFrame()
             elif sheet_name == "Non-conformities":
-                df = nc_df
+                df = nc_clean if not nc_df.empty else pd.DataFrame()
             elif sheet_name == "Résumé_Audit":
                 df = summary_df
             else:
@@ -657,22 +705,38 @@ def main():
                                     theme = "N/A"
                                     sstheme = "N/A"
                                 
-                                # Extract scoring data
-                                explanation_text = scoring['answers'].get('englishExplanationText', 'N/A')
-                                detailed_explanation = scoring['answers'].get('explanationText', 'N/A')
-                                score_label = scoring['score']['label']
-                                response = scoring['answers'].get('fieldAnswers', 'N/A')
+                                # Extract scoring data with safe conversion
+                                explanation_text = safe_extract_value(scoring['answers'].get('englishExplanationText'))
+                                detailed_explanation = safe_extract_value(scoring['answers'].get('explanationText'))
+                                score_label = safe_extract_value(scoring['score'].get('label'))
+                                
+                                # Handle fieldAnswers safely - it can be complex
+                                field_answers = scoring['answers'].get('fieldAnswers', {})
+                                if isinstance(field_answers, dict):
+                                    # Extract meaningful text from fieldAnswers
+                                    response_parts = []
+                                    for key, value in field_answers.items():
+                                        if isinstance(value, (str, int, float)) and value != '':
+                                            response_parts.append(f"{key}: {value}")
+                                        elif isinstance(value, dict):
+                                            # Try to extract text from nested dict
+                                            for sub_key, sub_value in value.items():
+                                                if isinstance(sub_value, (str, int, float)) and sub_value != '':
+                                                    response_parts.append(f"{key}.{sub_key}: {sub_value}")
+                                    response = "; ".join(response_parts) if response_parts else "N/A"
+                                else:
+                                    response = safe_extract_value(field_answers)
                                 
                                 checklist_data.append({
-                                    "Num": display_num,
-                                    "UUID": uuid,
-                                    "Chapitre": chapitre,
-                                    "Theme": theme,
-                                    "SSTheme": sstheme,
-                                    "Explication": explanation_text,
-                                    "Explication détaillée": detailed_explanation,
-                                    "Score": score_label,
-                                    "Réponse": response
+                                    "Num": str(display_num),
+                                    "UUID": str(uuid),
+                                    "Chapitre": str(chapitre),
+                                    "Theme": str(theme),
+                                    "SSTheme": str(sstheme),
+                                    "Explication": str(explanation_text),
+                                    "Explication détaillée": str(detailed_explanation),
+                                    "Score": str(score_label),
+                                    "Réponse": str(response)
                                 })
                             
                             st.success(f"✅ Extraction réussie : {len(checklist_data)} exigences extraites")
