@@ -335,37 +335,19 @@ if main_option == "Traitement des rapports IFS":
                 
                 profile_df = pd.DataFrame(profile_list)
                 
-                # Affichage en deux colonnes : lecture et édition
-                col1, col2 = st.columns([3, 2])
-                
-                with col1:
-                    st.write("**📋 Données du profil (lecture seule)**")
-                    # Affichage optimisé pour la lecture avec retour à la ligne
-                    st.dataframe(
-                        profile_df[['Champ', 'Valeur']],
-                        column_config={
-                            "Champ": st.column_config.TextColumn("Champ", width="medium"),
-                            "Valeur": st.column_config.TextColumn("Valeur", width="large")
-                        },
-                        hide_index=True,
-                        use_container_width=True,
-                        height=400
-                    )
-                
-                with col2:
-                    st.write("**✏️ Zone de commentaires**")
-                    # Zone d'édition des commentaires
-                    edited_profile_df = st.data_editor(
-                        profile_df,
-                        column_config={
-                            "Champ": st.column_config.TextColumn("Champ", disabled=True, width="small"),
-                            "Valeur": st.column_config.TextColumn("Valeur", disabled=True, width="small"),
-                            "Commentaire": st.column_config.TextColumn("Commentaire", width="large")
-                        },
-                        hide_index=True,
-                        use_container_width=True,
-                        height=400
-                    )
+                # Tableau éditable avec commentaires
+                st.write("**✏️ Profil de l'entreprise avec commentaires éditables**")
+                edited_profile_df = st.data_editor(
+                    profile_df,
+                    column_config={
+                        "Champ": st.column_config.TextColumn("Champ", disabled=True, width="medium"),
+                        "Valeur": st.column_config.TextColumn("Valeur", disabled=True, width="medium"),
+                        "Commentaire": st.column_config.TextColumn("Commentaire", width="large")
+                    },
+                    hide_index=True,
+                    use_container_width=True,
+                    height=500
+                )
                 
                 # Store edited data in session state
                 st.session_state['edited_profile'] = edited_profile_df
@@ -374,7 +356,7 @@ if main_option == "Traitement des rapports IFS":
                 st.subheader("Checklist des exigences")
                 
                 # Add filters
-                col1, col2, col3 = st.columns(3)
+                col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     score_filter = st.selectbox("Filtrer par score:", ["Tous", "A", "B", "C", "D", "NA"])
                 with col2:
@@ -384,19 +366,74 @@ if main_option == "Traitement des rapports IFS":
                     else:
                         chapitre_filter = "Tous"
                 with col3:
+                    content_filter = st.selectbox(
+                        "Filtrer le contenu:", 
+                        ["Explications non vides", "Tous", "Explications vides"],
+                        index=0  # Par défaut sur "Explications non vides"
+                    )
+                with col4:
                     show_responses = st.checkbox("Afficher les réponses", value=True)
                 
                 # Filter data
                 filtered_checklist = checklist_data.copy()
+                
+                # Filtre par score
                 if score_filter != "Tous":
                     filtered_checklist = [item for item in filtered_checklist if item['Score'] == score_filter]
+                
+                # Filtre par chapitre
                 if chapitre_filter != "Tous":
                     filtered_checklist = [item for item in filtered_checklist if str(item['Chapitre']) == chapitre_filter]
+                
+                # Filtre par contenu des explications
+                if content_filter == "Explications non vides":
+                    filtered_checklist = [item for item in filtered_checklist 
+                                        if (item['Explanation'] != 'N/A' and item['Explanation'].strip() != '') 
+                                        or (item['Detailed Explanation'] != 'N/A' and item['Detailed Explanation'].strip() != '')]
+                elif content_filter == "Explications vides":
+                    filtered_checklist = [item for item in filtered_checklist 
+                                        if (item['Explanation'] == 'N/A' or item['Explanation'].strip() == '') 
+                                        and (item['Detailed Explanation'] == 'N/A' or item['Detailed Explanation'].strip() == '')]
                 
                 st.info(f"Affichage de {len(filtered_checklist)} exigences sur {len(checklist_data)} au total")
                 
                 if filtered_checklist:
-                    # Create DataFrame for checklist
+                    # Vue détaillée par défaut avec expandeurs ouverts
+                    st.write("**📋 Vue détaillée des exigences avec commentaires**")
+                    st.write("💡 *Conseil : Ajoutez vos commentaires puis refermez les expandeurs au fur et à mesure*")
+                    
+                    # Affichage avec expandeurs pour chaque exigence (OUVERTS par défaut)
+                    comments_dict = {}
+                    
+                    for i, item in enumerate(filtered_checklist):
+                        score_emoji = {"A": "✅", "B": "⚠️", "C": "🟠", "D": "🔴", "NA": "⚫"}.get(item['Score'], "❓")
+                        
+                        # TOUS LES EXPANDEURS OUVERTS PAR DÉFAUT (expanded=True)
+                        with st.expander(f"{score_emoji} Exigence {item['Num']} - Score: {item['Score']}", expanded=True):
+                            col_detail1, col_detail2 = st.columns([2, 1])
+                            
+                            with col_detail1:
+                                st.write(f"**📖 Explication:** {item['Explanation']}")
+                                st.write(f"**📋 Explication détaillée:** {item['Detailed Explanation']}")
+                                if show_responses:
+                                    st.write(f"**💬 Réponse:** {item['Response']}")
+                            
+                            with col_detail2:
+                                st.write(f"**N°:** {item['Num']}")
+                                st.write(f"**Score:** {item['Score']}")
+                                st.write(f"**Chapitre:** {item.get('Chapitre', 'N/A')}")
+                            
+                            # Zone de commentaire pour chaque exigence
+                            comment_key = f"comment_detail_{item['Num']}"
+                            comment = st.text_area(
+                                "💬 Votre commentaire:",
+                                key=comment_key,
+                                height=100,
+                                placeholder="Ajoutez vos observations pour cette exigence..."
+                            )
+                            comments_dict[item['Num']] = comment
+                    
+                    # Reconstituer le DataFrame avec les commentaires
                     checklist_list = []
                     for item in filtered_checklist:
                         row = {
@@ -405,80 +442,14 @@ if main_option == "Traitement des rapports IFS":
                             "Chapitre": item.get('Chapitre', 'N/A'),
                             "Explication": item['Explanation'],
                             "Explication détaillée": item['Detailed Explanation'],
-                            "Commentaire": ""
+                            "Commentaire": comments_dict.get(item['Num'], "")
                         }
                         if show_responses:
                             row["Réponse"] = item['Response']
                         checklist_list.append(row)
                     
                     checklist_df = pd.DataFrame(checklist_list)
-                    
-                    # Affichage amélioré avec expandeurs pour les longues descriptions
-                    st.write("**📋 Exigences avec commentaires éditables**")
-                    
-                    # Utilisation d'un mode d'affichage hybride
-                    display_mode = st.radio("Mode d'affichage:", ["Tableau compact", "Vue détaillée"])
-                    
-                    if display_mode == "Tableau compact":
-                        # Tableau éditable compact
-                        column_config = {
-                            "Num": st.column_config.TextColumn("N°", disabled=True, width="small"),
-                            "Score": st.column_config.TextColumn("Score", disabled=True, width="small"),
-                            "Chapitre": st.column_config.TextColumn("Chapitre", disabled=True, width="small"),
-                            "Explication": st.column_config.TextColumn("Explication", disabled=True, width="medium"),
-                            "Explication détaillée": st.column_config.TextColumn("Explication détaillée", disabled=True, width="medium"),
-                            "Commentaire": st.column_config.TextColumn("Commentaire", width="large")
-                        }
-                        if show_responses:
-                            column_config["Réponse"] = st.column_config.TextColumn("Réponse", disabled=True, width="medium")
-                        
-                        edited_checklist_df = st.data_editor(
-                            checklist_df,
-                            column_config=column_config,
-                            hide_index=True,
-                            use_container_width=True,
-                            height=600
-                        )
-                        st.session_state['edited_checklist'] = edited_checklist_df
-                        
-                    else:  # Vue détaillée
-                        # Affichage avec expandeurs pour chaque exigence
-                        comments_dict = {}
-                        
-                        for i, item in enumerate(filtered_checklist):
-                            score_emoji = {"A": "✅", "B": "⚠️", "C": "🟠", "D": "🔴", "NA": "⚫"}.get(item['Score'], "❓")
-                            
-                            with st.expander(f"{score_emoji} Exigence {item['Num']} - Score: {item['Score']}", expanded=False):
-                                col_detail1, col_detail2 = st.columns([2, 1])
-                                
-                                with col_detail1:
-                                    st.write(f"**📖 Explication:** {item['Explanation']}")
-                                    st.write(f"**📋 Explication détaillée:** {item['Detailed Explanation']}")
-                                    if show_responses:
-                                        st.write(f"**💬 Réponse:** {item['Response']}")
-                                
-                                with col_detail2:
-                                    st.write(f"**N°:** {item['Num']}")
-                                    st.write(f"**Score:** {item['Score']}")
-                                    st.write(f"**Chapitre:** {item.get('Chapitre', 'N/A')}")
-                                
-                                # Zone de commentaire pour chaque exigence
-                                comment_key = f"comment_detail_{item['Num']}"
-                                comment = st.text_area(
-                                    "💬 Votre commentaire:",
-                                    key=comment_key,
-                                    height=100,
-                                    placeholder="Ajoutez vos observations pour cette exigence..."
-                                )
-                                comments_dict[item['Num']] = comment
-                        
-                        # Reconstituer le DataFrame avec les commentaires
-                        for i, row in enumerate(checklist_df.itertuples()):
-                            num = row.Num
-                            if num in comments_dict:
-                                checklist_df.at[i, 'Commentaire'] = comments_dict[num]
-                        
-                        st.session_state['edited_checklist'] = checklist_df
+                    st.session_state['edited_checklist'] = checklist_df
                 else:
                     st.warning("Aucune exigence trouvée avec ces filtres.")
 
@@ -558,95 +529,104 @@ if main_option == "Traitement des rapports IFS":
             col1, col2 = st.columns(2)
             
             with col1:
-                if st.button("💾 Sauvegarder le travail en cours", type="secondary"):
+                st.write("**💾 Sauvegarder le travail en cours**")
+                st.write("*Permet de reprendre plus tard*")
+                if st.button("💾 Générer la sauvegarde", type="secondary", key="save_work_btn"):
                     numero_coid = profile_data.get("N° COID du portail", "inconnu")
-                    work_file = save_work_to_excel(
-                        profile_data, 
-                        checklist_data, 
-                        non_conformities,
-                        st.session_state.get('edited_profile'),
-                        st.session_state.get('edited_checklist'),
-                        st.session_state.get('edited_nc'),
-                        numero_coid
-                    )
                     
-                    from datetime import datetime
+                    with st.spinner("Génération de la sauvegarde..."):
+                        work_file = save_work_to_excel(
+                            profile_data, 
+                            checklist_data, 
+                            non_conformities,
+                            st.session_state.get('edited_profile'),
+                            st.session_state.get('edited_checklist'),
+                            st.session_state.get('edited_nc'),
+                            numero_coid
+                        )
+                    
                     date_str = datetime.now().strftime("%Y%m%d_%H%M")
                     work_filename = f"travail_IFS_{numero_coid}_{date_str}.xlsx"
                     
+                    st.success("💾 Sauvegarde générée avec succès !")
                     st.download_button(
-                        label="📥 Télécharger la sauvegarde de travail",
+                        label="📥 Télécharger la sauvegarde",
                         data=work_file,
                         file_name=work_filename,
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        help="Sauvegarde tous vos commentaires pour reprendre plus tard"
+                        help="Fichier Excel contenant tous vos commentaires pour reprendre plus tard",
+                        key="download_work_btn"
                     )
-                    st.success("💾 Sauvegarde de travail générée ! Vous pourrez reprendre là où vous vous êtes arrêté.")
             
             with col2:
-                if st.button("📊 Exporter le rapport final", type="primary"):
+                st.write("**📊 Exporter le rapport final**")
+                st.write("*Rapport final pour présentation*")
+                if st.button("📊 Générer le rapport", type="primary", key="export_final_btn"):
                     numero_coid = profile_data.get("N° COID du portail", "inconnu")
                     
-                    # Create the Excel file with column formatting
-                    output = BytesIO()
-                    
-                    # Create Excel writer and adjust column widths
-                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        # Profile tab
-                        if 'edited_profile' in st.session_state:
-                            profile_export_df = st.session_state['edited_profile']
-                        else:
-                            profile_export_df = pd.DataFrame([
-                                {"Champ": k, "Valeur": v, "Commentaire": ""} 
-                                for k, v in profile_data.items()
-                            ])
+                    with st.spinner("Génération du rapport final..."):
+                        # Create the Excel file with column formatting
+                        output = BytesIO()
                         
-                        profile_export_df.to_excel(writer, index=False, sheet_name="Profile")
-
-                        # Checklist tab
-                        if 'edited_checklist' in st.session_state:
-                            checklist_export_df = st.session_state['edited_checklist']
-                        else:
-                            checklist_export_df = pd.DataFrame(checklist_data)
-                            checklist_export_df['Commentaire'] = ''
-                        
-                        checklist_export_df.to_excel(writer, index=False, sheet_name="Checklist")
-
-                        # Non-conformities tab
-                        if non_conformities:
-                            if 'edited_nc' in st.session_state:
-                                nc_export_df = st.session_state['edited_nc']
+                        # Create Excel writer and adjust column widths
+                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                            # Profile tab
+                            if 'edited_profile' in st.session_state:
+                                profile_export_df = st.session_state['edited_profile']
                             else:
-                                nc_export_df = pd.DataFrame(non_conformities)
-                                nc_export_df['Commentaire'] = ''
-                                nc_export_df['Plan d\'action'] = ''
+                                profile_export_df = pd.DataFrame([
+                                    {"Champ": k, "Valeur": v, "Commentaire": ""} 
+                                    for k, v in profile_data.items()
+                                ])
                             
-                            nc_export_df.to_excel(writer, index=False, sheet_name="Non-conformities")
+                            profile_export_df.to_excel(writer, index=False, sheet_name="Profile")
 
-                        # Adjust column widths for all sheets
-                        for sheet_name in writer.sheets:
-                            worksheet = writer.sheets[sheet_name]
-                            for col in worksheet.columns:
-                                max_length = 0
-                                column = col[0].column_letter # Get the column name
-                                for cell in col:
-                                    try: # Necessary to avoid error on empty cells
-                                        if len(str(cell.value)) > max_length:
-                                            max_length = len(str(cell.value))
-                                    except:
-                                        pass
-                                adjusted_width = min((max_length + 2) * 1.2, 50)  # Limit max width
-                                worksheet.column_dimensions[column].width = adjusted_width
+                            # Checklist tab
+                            if 'edited_checklist' in st.session_state:
+                                checklist_export_df = st.session_state['edited_checklist']
+                            else:
+                                checklist_export_df = pd.DataFrame(checklist_data)
+                                checklist_export_df['Commentaire'] = ''
+                            
+                            checklist_export_df.to_excel(writer, index=False, sheet_name="Checklist")
 
-                    # Reset the position of the output to the start
-                    output.seek(0)
+                            # Non-conformities tab
+                            if non_conformities:
+                                if 'edited_nc' in st.session_state:
+                                    nc_export_df = st.session_state['edited_nc']
+                                else:
+                                    nc_export_df = pd.DataFrame(non_conformities)
+                                    nc_export_df['Commentaire'] = ''
+                                    nc_export_df['Plan d\'action'] = ''
+                                
+                                nc_export_df.to_excel(writer, index=False, sheet_name="Non-conformities")
 
+                            # Adjust column widths for all sheets
+                            for sheet_name in writer.sheets:
+                                worksheet = writer.sheets[sheet_name]
+                                for col in worksheet.columns:
+                                    max_length = 0
+                                    column = col[0].column_letter # Get the column name
+                                    for cell in col:
+                                        try: # Necessary to avoid error on empty cells
+                                            if len(str(cell.value)) > max_length:
+                                                max_length = len(str(cell.value))
+                                        except:
+                                            pass
+                                    adjusted_width = min((max_length + 2) * 1.2, 50)  # Limit max width
+                                    worksheet.column_dimensions[column].width = adjusted_width
+
+                        # Reset the position of the output to the start
+                        output.seek(0)
+                    
+                    st.success("📊 Rapport final généré avec succès !")
                     # Provide the download button with the COID number in the filename
                     st.download_button(
                         label="📥 Télécharger le rapport final",
                         data=output,
                         file_name=f'rapport_final_IFS_{numero_coid}.xlsx',
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="download_final_btn"
                     )
 
         except json.JSONDecodeError:
