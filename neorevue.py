@@ -2,19 +2,19 @@ import json
 import pandas as pd
 import streamlit as st
 from io import BytesIO
-import openpyxl
+import requests
 from datetime import datetime
 
 # Configuration Streamlit
 st.set_page_config(
     page_title="IFS NEO Data Extractor",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
-# CSS personnalisé pour améliorer l'apparence
-def apply_custom_css():
-    st.markdown("""
+# CSS personnalisé pour les tableaux
+def apply_table_css():
+    st.markdown(
+        """
         <style>
         .main-header {
             font-size: 2.5rem;
@@ -22,34 +22,59 @@ def apply_custom_css():
             text-align: center;
             margin-bottom: 2rem;
         }
-        .section-header {
-            font-size: 1.5rem;
-            color: #2e8b57;
-            border-bottom: 2px solid #2e8b57;
-            padding-bottom: 0.5rem;
-            margin: 1rem 0;
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background-color: #f9f9f9;
+            margin: 10px 0;
         }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+            vertical-align: top;
+        }
+        th {
+            background-color: #2e8b57;
+            color: white;
+            font-weight: bold;
+        }
+        tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+        tr:hover {
+            background-color: #e8f4f8;
+        }
+        .score-A { background-color: #d4edda !important; color: #155724; font-weight: bold; }
+        .score-B { background-color: #fff3cd !important; color: #856404; font-weight: bold; }
+        .score-C { background-color: #ffeaa7 !important; color: #856404; font-weight: bold; }
+        .score-D { background-color: #f8d7da !important; color: #721c24; font-weight: bold; }
         .info-box {
-            background-color: #f0f8ff;
-            border-left: 4px solid #1f77b4;
-            padding: 1rem;
-            margin: 1rem 0;
-        }
-        .warning-box {
-            background-color: #fff3cd;
-            border-left: 4px solid #ffc107;
-            padding: 1rem;
-            margin: 1rem 0;
+            background-color: #e3f2fd;
+            border-left: 4px solid #2196f3;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 4px;
         }
         .success-box {
-            background-color: #d4edda;
-            border-left: 4px solid #28a745;
-            padding: 1rem;
-            margin: 1rem 0;
+            background-color: #e8f5e8;
+            border-left: 4px solid #4caf50;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+        .warning-box {
+            background-color: #fff8e1;
+            border-left: 4px solid #ff9800;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 4px;
         }
         </style>
-    """, unsafe_allow_html=True)
+        """, unsafe_allow_html=True
+    )
 
+# Fonction pour aplatir le JSON
 def flatten_json_safe(nested_json, parent_key='', sep='_'):
     """Aplatit une structure JSON imbriquée de manière sécurisée."""
     items = []
@@ -67,34 +92,45 @@ def flatten_json_safe(nested_json, parent_key='', sep='_'):
         items.append((parent_key, nested_json))
     return dict(items)
 
+# Fonction pour extraire les données du JSON aplati
 def extract_from_flattened(flattened_data, mapping, selected_fields):
-    """Extrait les données du JSON aplati selon le mapping fourni."""
     extracted_data = {}
     for label, flat_path in mapping.items():
         if label in selected_fields:
             extracted_data[label] = flattened_data.get(flat_path, 'N/A')
     return extracted_data
 
-def get_user_comments():
-    """Récupère tous les commentaires utilisateur depuis la session state."""
-    comments = {}
-    for key, value in st.session_state.items():
-        if key.startswith(('profile_comment_', 'checklist_comment_', 'non_conformity_comment_')):
-            comments[key] = value
-    return comments
+# Charger le mapping UUID depuis l'URL
+def load_uuid_mapping_from_url(url):
+    try:
+        response = requests.get(url)
+        if response.status_code == 200:
+            from io import StringIO
+            csv_data = StringIO(response.text)
+            uuid_mapping_df = pd.read_csv(csv_data)
+            
+            # Vérifier les colonnes requises
+            required_columns = ['UUID', 'Num', 'Chapitre', 'Theme', 'SSTheme']
+            for column in required_columns:
+                if column not in uuid_mapping_df.columns:
+                    st.error(f"Le fichier CSV doit contenir une colonne '{column}' avec des valeurs valides.")
+                    return pd.DataFrame()
+            
+            uuid_mapping_df = uuid_mapping_df.dropna(subset=['UUID', 'Num'])
+            uuid_mapping_df['Chapitre'] = uuid_mapping_df['Chapitre'].astype(str).str.strip()
+            uuid_mapping_df = uuid_mapping_df.drop_duplicates(subset=['Chapitre', 'Num'])
+            return uuid_mapping_df
+        else:
+            st.error("Impossible de charger le fichier CSV des UUID depuis l'URL fourni.")
+            return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Erreur lors du chargement du mapping UUID: {str(e)}")
+        return pd.DataFrame()
 
-def initialize_session_state():
-    """Initialise les variables de session state nécessaires."""
-    if 'json_data' not in st.session_state:
-        st.session_state.json_data = None
-    if 'profile_data' not in st.session_state:
-        st.session_state.profile_data = {}
-    if 'checklist_data' not in st.session_state:
-        st.session_state.checklist_data = []
-    if 'non_conformities' not in st.session_state:
-        st.session_state.non_conformities = []
+# URL pour le mapping UUID
+UUID_MAPPING_URL = "https://raw.githubusercontent.com/M00N69/Gemini-Knowledge/refs/heads/main/IFSV8listUUID.csv"
 
-# Mapping complet des champs
+# Mapping des champs
 FLATTENED_FIELD_MAPPING = {
     "Nom du site à auditer": "data_modules_food_8_questions_companyName_answer",
     "N° COID du portail": "data_modules_food_8_questions_companyCoid_answer",
@@ -132,321 +168,154 @@ FLATTENED_FIELD_MAPPING = {
     "Préciser les produits à exclure": "data_modules_food_8_questions_exclusionsDescription_answer"
 }
 
-def process_json_file(uploaded_file):
-    """Traite le fichier JSON uploadé et extrait les données."""
-    try:
-        json_data = json.load(uploaded_file)
-        st.session_state.json_data = json_data
-        
-        # Aplatir les données JSON
-        flattened_json_data = flatten_json_safe(json_data)
-        
-        # Extraire les données de profil
-        profile_data = extract_from_flattened(
-            flattened_json_data, 
-            FLATTENED_FIELD_MAPPING, 
-            list(FLATTENED_FIELD_MAPPING.keys())
-        )
-        st.session_state.profile_data = profile_data
-        
-        # Extraire les données de checklist
-        checklist_data = []
-        if 'data' in json_data and 'modules' in json_data['data']:
-            modules = json_data['data']['modules']
-            if 'food_8' in modules and 'checklists' in modules['food_8']:
-                checklists = modules['food_8']['checklists']
-                if 'checklistFood8' in checklists and 'resultScorings' in checklists['checklistFood8']:
-                    for uuid, scoring in checklists['checklistFood8']['resultScorings'].items():
-                        checklist_data.append({
-                            "Num": uuid,
-                            "Explanation": scoring['answers'].get('englishExplanationText', 'N/A'),
-                            "Detailed Explanation": scoring['answers'].get('explanationText', 'N/A'),
-                            "Score": scoring['score']['label'],
-                            "Response": scoring['answers'].get('fieldAnswers', 'N/A')
-                        })
-        
-        st.session_state.checklist_data = checklist_data
-        
-        # Extraire les non-conformités
-        non_conformities = [item for item in checklist_data if item['Score'] != 'A']
-        st.session_state.non_conformities = non_conformities
-        
-        return True, "Fichier traité avec succès!"
-        
-    except json.JSONDecodeError as e:
-        return False, f"Erreur lors du décodage JSON: {str(e)}"
-    except Exception as e:
-        return False, f"Erreur lors du traitement du fichier: {str(e)}"
+def create_profile_table(profile_data):
+    """Crée un tableau HTML pour les données de profil."""
+    table_html = """
+    <table>
+    <thead>
+        <tr>
+            <th style="width: 40%;">Champ</th>
+            <th style="width: 60%;">Valeur</th>
+        </tr>
+    </thead>
+    <tbody>
+    """
+    
+    for field, value in profile_data.items():
+        # Escape HTML characters
+        value_str = str(value).replace('<', '&lt;').replace('>', '&gt;')
+        table_html += f"""
+        <tr>
+            <td><strong>{field}</strong></td>
+            <td>{value_str}</td>
+        </tr>
+        """
+    
+    table_html += "</tbody></table>"
+    return table_html
 
-def display_profile_section():
-    """Affiche la section du profil avec possibilité d'ajout de commentaires."""
-    st.markdown('<div class="section-header">📋 Profil de l\'entreprise</div>', unsafe_allow_html=True)
+def create_checklist_table(checklist_data, show_filters=True):
+    """Crée un tableau HTML pour les données de checklist avec filtres optionnels."""
     
-    if not st.session_state.profile_data:
-        st.warning("Aucune donnée de profil disponible. Veuillez d'abord charger un fichier IFS.")
-        return
-    
-    # Organiser les données en colonnes pour une meilleure présentation
-    col1, col2 = st.columns(2)
-    
-    profile_items = list(st.session_state.profile_data.items())
-    mid_point = len(profile_items) // 2
-    
-    with col1:
-        for field, value in profile_items[:mid_point]:
-            st.text_input(f"**{field}**", value=str(value), key=f"profile_field_{field}", disabled=True)
-            # Zone de commentaire pour chaque champ
-            st.text_area(
-                f"Commentaire - {field}",
-                key=f"profile_comment_{field}",
-                height=60,
-                placeholder="Ajoutez vos commentaires ici..."
+    if show_filters:
+        # Filtres
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            score_filter = st.selectbox(
+                "Filtrer par score:",
+                ["Tous", "A", "B", "C", "D", "Non applicable"],
+                key="checklist_score_filter"
             )
-    
-    with col2:
-        for field, value in profile_items[mid_point:]:
-            st.text_input(f"**{field}**", value=str(value), key=f"profile_field_{field}", disabled=True)
-            # Zone de commentaire pour chaque champ
-            st.text_area(
-                f"Commentaire - {field}",
-                key=f"profile_comment_{field}",
-                height=60,
-                placeholder="Ajoutez vos commentaires ici..."
+        
+        with col2:
+            search_term = st.text_input(
+                "Rechercher dans les exigences:",
+                key="checklist_search"
             )
+        
+        with col3:
+            show_responses = st.checkbox("Afficher les réponses", value=True, key="show_responses")
+        
+        # Appliquer les filtres
+        filtered_data = checklist_data.copy()
+        if score_filter != "Tous":
+            filtered_data = [item for item in filtered_data if item['Score'] == score_filter]
+        
+        if search_term:
+            filtered_data = [item for item in filtered_data 
+                           if search_term.lower() in item['Explanation'].lower() 
+                           or search_term.lower() in item['Detailed Explanation'].lower()
+                           or search_term.lower() in str(item['Num']).lower()]
+        
+        st.info(f"Affichage de {len(filtered_data)} exigences sur {len(checklist_data)} au total")
+    else:
+        filtered_data = checklist_data
+        show_responses = True
+    
+    # Créer le tableau
+    table_html = """
+    <table>
+    <thead>
+        <tr>
+            <th style="width: 8%;">N°</th>
+            <th style="width: 8%;">Score</th>
+            <th style="width: 30%;">Explication</th>
+            <th style="width: 30%;">Explication détaillée</th>
+    """
+    
+    if show_responses:
+        table_html += '<th style="width: 24%;">Réponse</th>'
+    
+    table_html += """
+        </tr>
+    </thead>
+    <tbody>
+    """
+    
+    for item in filtered_data:
+        score_class = f"score-{item['Score']}" if item['Score'] in ['A', 'B', 'C', 'D'] else ""
+        
+        explanation = str(item['Explanation']).replace('<', '&lt;').replace('>', '&gt;')
+        detailed_explanation = str(item['Detailed Explanation']).replace('<', '&lt;').replace('>', '&gt;')
+        response = str(item['Response']).replace('<', '&lt;').replace('>', '&gt;')
+        
+        table_html += f"""
+        <tr>
+            <td><strong>{item['Num']}</strong></td>
+            <td class="{score_class}">{item['Score']}</td>
+            <td>{explanation}</td>
+            <td>{detailed_explanation}</td>
+        """
+        
+        if show_responses:
+            table_html += f"<td>{response}</td>"
+        
+        table_html += "</tr>"
+    
+    table_html += "</tbody></table>"
+    return table_html
 
-def display_checklist_section():
-    """Affiche la section de la checklist complète."""
-    st.markdown('<div class="section-header">✅ Checklist complète</div>', unsafe_allow_html=True)
-    
-    if not st.session_state.checklist_data:
-        st.warning("Aucune donnée de checklist disponible. Veuillez d'abord charger un fichier IFS.")
-        return
-    
-    # Filtre par score
-    score_filter = st.selectbox(
-        "Filtrer par score:",
-        ["Tous", "A", "B", "C", "D", "Non applicable"]
-    )
-    
-    # Appliquer le filtre
-    filtered_data = st.session_state.checklist_data
-    if score_filter != "Tous":
-        filtered_data = [item for item in st.session_state.checklist_data if item['Score'] == score_filter]
-    
-    st.info(f"Affichage de {len(filtered_data)} éléments sur {len(st.session_state.checklist_data)} au total")
-    
-    # Afficher les éléments de la checklist
-    for i, item in enumerate(filtered_data):
-        with st.expander(f"Exigence {item['Num']} - Score: {item['Score']}", expanded=False):
-            col1, col2 = st.columns([3, 1])
-            
-            with col1:
-                st.write(f"**Explication:** {item['Explanation']}")
-                st.write(f"**Explication détaillée:** {item['Detailed Explanation']}")
-                st.write(f"**Réponse:** {item['Response']}")
-                
-                # Zone de commentaire pour chaque élément
-                st.text_area(
-                    "Commentaire de l'auditeur:",
-                    key=f"checklist_comment_{item['Num']}",
-                    height=100,
-                    placeholder="Ajoutez vos observations, commentaires ou actions à prendre..."
-                )
-            
-            with col2:
-                # Affichage du score avec couleur
-                score_color = {
-                    'A': '#28a745',
-                    'B': '#ffc107', 
-                    'C': '#fd7e14',
-                    'D': '#dc3545',
-                    'Non applicable': '#6c757d'
-                }.get(item['Score'], '#6c757d')
-                
-                st.markdown(f"""
-                    <div style="background-color: {score_color}; color: white; 
-                                padding: 10px; border-radius: 5px; text-align: center; 
-                                font-weight: bold; font-size: 18px;">
-                        {item['Score']}
-                    </div>
-                """, unsafe_allow_html=True)
-
-def display_non_conformities_section():
-    """Affiche la section des non-conformités."""
-    st.markdown('<div class="section-header">⚠️ Non-conformités</div>', unsafe_allow_html=True)
-    
-    if not st.session_state.non_conformities:
-        st.success("Aucune non-conformité détectée ! Toutes les exigences sont notées A.")
-        return
-    
-    st.warning(f"Nombre de non-conformités détectées: {len(st.session_state.non_conformities)}")
-    
-    # Statistiques des non-conformités
-    scores_count = {}
-    for item in st.session_state.non_conformities:
-        score = item['Score']
-        scores_count[score] = scores_count.get(score, 0) + 1
-    
-    col1, col2, col3, col4 = st.columns(4)
-    for i, (score, count) in enumerate(scores_count.items()):
-        with [col1, col2, col3, col4][i % 4]:
-            st.metric(f"Score {score}", count)
-    
-    # Afficher chaque non-conformité
-    for item in st.session_state.non_conformities:
-        with st.container():
-            st.markdown(f"""
-                <div style="border-left: 4px solid #dc3545; padding: 15px; margin: 10px 0; 
-                           background-color: #f8f9fa;">
-                    <h4>🔍 Exigence {item['Num']} - Score: {item['Score']}</h4>
-                </div>
-            """, unsafe_allow_html=True)
-            
-            col1, col2 = st.columns([3, 1])
-            
-            with col1:
-                st.write(f"**Explication:** {item['Explanation']}")
-                st.write(f"**Explication détaillée:** {item['Detailed Explanation']}")
-                st.write(f"**Réponse:** {item['Response']}")
-                
-                # Plan d'action
-                st.text_area(
-                    "Plan d'action corrective:",
-                    key=f"non_conformity_action_{item['Num']}",
-                    height=100,
-                    placeholder="Décrivez les actions correctives à mettre en place..."
-                )
-                
-                # Commentaire de l'auditeur
-                st.text_area(
-                    "Commentaire de l'auditeur:",
-                    key=f"non_conformity_comment_{item['Num']}",
-                    height=80,
-                    placeholder="Observations de l'auditeur..."
-                )
-            
-            with col2:
-                # Sélection de la priorité
-                priority = st.selectbox(
-                    "Priorité:",
-                    ["Haute", "Moyenne", "Basse"],
-                    key=f"priority_{item['Num']}"
-                )
-                
-                # Date limite
-                deadline = st.date_input(
-                    "Date limite:",
-                    key=f"deadline_{item['Num']}"
-                )
-                
-                # Responsable
-                responsible = st.text_input(
-                    "Responsable:",
-                    key=f"responsible_{item['Num']}",
-                    placeholder="Nom du responsable"
-                )
-
-def create_enhanced_excel_export():
-    """Crée un fichier Excel enrichi avec toutes les données et commentaires."""
-    if not st.session_state.profile_data:
-        st.error("Aucune donnée à exporter. Veuillez d'abord charger un fichier IFS.")
-        return None
-    
-    # Récupérer tous les commentaires
-    comments = get_user_comments()
-    
-    # Créer le fichier Excel en mémoire
+def create_excel_export(profile_data, checklist_data, non_conformities, coid):
+    """Crée un fichier Excel avec toutes les données."""
     output = BytesIO()
     
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         # Onglet Profil
-        profile_rows = []
-        for field, value in st.session_state.profile_data.items():
-            comment_key = f"profile_comment_{field}"
-            comment = comments.get(comment_key, "")
-            profile_rows.append({
-                "Champ": field,
-                "Valeur": value,
-                "Commentaire": comment,
-                "Réponse auditeur": ""
-            })
-        
-        df_profile = pd.DataFrame(profile_rows)
-        df_profile.to_excel(writer, index=False, sheet_name="Profil")
+        profile_df = pd.DataFrame([
+            {"Champ": k, "Valeur": v} for k, v in profile_data.items()
+        ])
+        profile_df.to_excel(writer, index=False, sheet_name="Profil")
         
         # Onglet Checklist complète
-        checklist_rows = []
-        for item in st.session_state.checklist_data:
-            comment_key = f"checklist_comment_{item['Num']}"
-            comment = comments.get(comment_key, "")
-            checklist_rows.append({
-                "Numéro": item['Num'],
-                "Explication": item['Explanation'],
-                "Explication détaillée": item['Detailed Explanation'],
-                "Score": item['Score'],
-                "Réponse": item['Response'],
-                "Commentaire auditeur": comment,
-                "Action requise": ""
-            })
+        checklist_df = pd.DataFrame(checklist_data)
+        checklist_df.to_excel(writer, index=False, sheet_name="Checklist")
         
-        df_checklist = pd.DataFrame(checklist_rows)
-        df_checklist.to_excel(writer, index=False, sheet_name="Checklist")
+        # Onglet Non-conformités
+        if non_conformities:
+            nc_df = pd.DataFrame(non_conformities)
+            nc_df.to_excel(writer, index=False, sheet_name="Non-conformités")
         
-        # Onglet Non-conformités avec plan d'action
-        nc_rows = []
-        for item in st.session_state.non_conformities:
-            comment_key = f"non_conformity_comment_{item['Num']}"
-            action_key = f"non_conformity_action_{item['Num']}"
-            priority_key = f"priority_{item['Num']}"
-            deadline_key = f"deadline_{item['Num']}"
-            responsible_key = f"responsible_{item['Num']}"
+        # Onglet Statistiques
+        stats_data = []
+        if checklist_data:
+            total = len(checklist_data)
+            scores_count = {}
+            for item in checklist_data:
+                score = item['Score']
+                scores_count[score] = scores_count.get(score, 0) + 1
             
-            comment = comments.get(comment_key, "")
-            action = st.session_state.get(action_key, "")
-            priority = st.session_state.get(priority_key, "")
-            deadline = st.session_state.get(deadline_key, "")
-            responsible = st.session_state.get(responsible_key, "")
-            
-            nc_rows.append({
-                "Numéro": item['Num'],
-                "Score": item['Score'],
-                "Explication": item['Explanation'],
-                "Explication détaillée": item['Detailed Explanation'],
-                "Réponse": item['Response'],
-                "Commentaire auditeur": comment,
-                "Plan d'action": action,
-                "Priorité": priority,
-                "Date limite": deadline,
-                "Responsable": responsible,
-                "Statut": "En attente"
-            })
-        
-        df_nc = pd.DataFrame(nc_rows)
-        df_nc.to_excel(writer, index=False, sheet_name="Non-conformités")
-        
-        # Onglet Résumé
-        summary_data = {
-            "Indicateur": [
-                "Nombre total d'exigences",
-                "Exigences conformes (A)",
-                "Non-conformités mineures (B)",
-                "Non-conformités majeures (C)",
-                "Non-conformités critiques (D)",
-                "Taux de conformité (%)"
-            ],
-            "Valeur": [
-                len(st.session_state.checklist_data),
-                len([x for x in st.session_state.checklist_data if x['Score'] == 'A']),
-                len([x for x in st.session_state.checklist_data if x['Score'] == 'B']),
-                len([x for x in st.session_state.checklist_data if x['Score'] == 'C']),
-                len([x for x in st.session_state.checklist_data if x['Score'] == 'D']),
-                round((len([x for x in st.session_state.checklist_data if x['Score'] == 'A']) / 
-                      len(st.session_state.checklist_data)) * 100, 2) if st.session_state.checklist_data else 0
+            stats_data = [
+                {"Indicateur": "Total exigences", "Valeur": total},
+                {"Indicateur": "Score A", "Valeur": scores_count.get('A', 0)},
+                {"Indicateur": "Score B", "Valeur": scores_count.get('B', 0)},
+                {"Indicateur": "Score C", "Valeur": scores_count.get('C', 0)},
+                {"Indicateur": "Score D", "Valeur": scores_count.get('D', 0)},
+                {"Indicateur": "Taux conformité (%)", 
+                 "Valeur": round((scores_count.get('A', 0) / total) * 100, 2) if total > 0 else 0}
             ]
-        }
         
-        df_summary = pd.DataFrame(summary_data)
-        df_summary.to_excel(writer, index=False, sheet_name="Résumé")
+        stats_df = pd.DataFrame(stats_data)
+        stats_df.to_excel(writer, index=False, sheet_name="Statistiques")
         
         # Ajuster la largeur des colonnes
         for sheet_name in writer.sheets:
@@ -467,102 +336,235 @@ def create_enhanced_excel_export():
     return output
 
 def main():
-    """Fonction principale de l'application."""
-    # Initialiser la session state
-    initialize_session_state()
+    # Appliquer le CSS
+    apply_table_css()
     
-    # Appliquer le CSS personnalisé
-    apply_custom_css()
-    
-    # En-tête principal
+    # En-tête
     st.markdown('<div class="main-header">🔍 IFS NEO Data Extractor</div>', unsafe_allow_html=True)
-    st.markdown('<div class="info-box">Application d\'extraction et d\'analyse des données d\'audit IFS</div>', unsafe_allow_html=True)
     
-    # Navigation dans la sidebar
-    st.sidebar.title("📋 Navigation")
-    
-    # Upload du fichier IFS
-    st.sidebar.markdown("### 📁 Chargement des fichiers")
-    uploaded_json_file = st.sidebar.file_uploader(
-        "Charger le fichier IFS (.ifs)",
+    # Upload du fichier
+    uploaded_json_file = st.file_uploader(
+        "📁 Charger le fichier IFS de NEO", 
         type="ifs",
-        help="Sélectionnez le fichier d'audit IFS exporté depuis NEO"
+        help="Sélectionnez le fichier d'audit IFS (.ifs) exporté depuis NEO"
     )
     
-    # Traitement du fichier JSON
-    if uploaded_json_file and st.session_state.json_data is None:
-        with st.spinner("Traitement du fichier IFS en cours..."):
-            success, message = process_json_file(uploaded_json_file)
-            if success:
-                st.sidebar.success(message)
-            else:
-                st.sidebar.error(message)
-                return
-    
-    # Menu de navigation principal
-    if st.session_state.json_data:
-        st.sidebar.markdown("### 🎯 Sections disponibles")
-        page = st.sidebar.radio(
-            "Choisissez une section:",
-            ["📋 Profil de l'entreprise", "✅ Checklist complète", "⚠️ Non-conformités", "📊 Tableau de bord", "📄 Export Excel"]
-        )
-        
-        # Affichage des sections selon la navigation
-        if page == "📋 Profil de l'entreprise":
-            display_profile_section()
+    if uploaded_json_file:
+        try:
+            # Charger et traiter le fichier JSON
+            json_data = json.load(uploaded_json_file)
+            flattened_json_data = flatten_json_safe(json_data)
             
-        elif page == "✅ Checklist complète":
-            display_checklist_section()
+            # Extraire les données de profil
+            profile_data = extract_from_flattened(
+                flattened_json_data, 
+                FLATTENED_FIELD_MAPPING, 
+                list(FLATTENED_FIELD_MAPPING.keys())
+            )
             
-        elif page == "⚠️ Non-conformités":
-            display_non_conformities_section()
+            # Charger le mapping UUID
+            with st.spinner("Chargement du mapping des exigences..."):
+                uuid_mapping_df = load_uuid_mapping_from_url(UUID_MAPPING_URL)
             
-        elif page == "📊 Tableau de bord":
-            st.markdown('<div class="section-header">📊 Tableau de bord de l\'audit</div>', unsafe_allow_html=True)
-            
-            # Métriques principales
-            col1, col2, col3, col4 = st.columns(4)
-            
-            total_items = len(st.session_state.checklist_data)
-            conformes = len([x for x in st.session_state.checklist_data if x['Score'] == 'A'])
-            non_conformites = len(st.session_state.non_conformities)
-            taux_conformite = (conformes / total_items * 100) if total_items > 0 else 0
-            
-            with col1:
-                st.metric("Total exigences", total_items)
-            with col2:
-                st.metric("Conformes (A)", conformes)
-            with col3:
-                st.metric("Non-conformités", non_conformites)
-            with col4:
-                st.metric("Taux conformité", f"{taux_conformite:.1f}%")
-            
-            # Répartition des scores
-            if st.session_state.checklist_data:
-                scores_count = {}
-                for item in st.session_state.checklist_data:
-                    score = item['Score']
-                    scores_count[score] = scores_count.get(score, 0) + 1
-                
-                # Graphique de répartition
-                st.subheader("Répartition des scores")
-                chart_data = pd.DataFrame(list(scores_count.items()), columns=['Score', 'Nombre'])
-                st.bar_chart(chart_data.set_index('Score'))
-            
-        elif page == "📄 Export Excel":
-            st.markdown('<div class="section-header">📄 Export des données</div>', unsafe_allow_html=True)
-            
-            st.info("Exportez toutes les données collectées avec vos commentaires dans un fichier Excel structuré.")
-            
-            if st.button("🔄 Générer le fichier Excel", type="primary"):
-                with st.spinner("Génération du fichier Excel..."):
-                    excel_file = create_enhanced_excel_export()
+            # Extraire les données de checklist
+            checklist_data = []
+            if not uuid_mapping_df.empty:
+                for _, row in uuid_mapping_df.iterrows():
+                    uuid = row['UUID']
+                    prefix = f"data_modules_food_8_checklists_checklistFood8_resultScorings_{uuid}"
                     
-                    if excel_file:
-                        # Nom du fichier avec COID et date
-                        coid = st.session_state.profile_data.get("N° COID du portail", "inconnu")
+                    explanation_text = flattened_json_data.get(f"{prefix}_answers_englishExplanationText", "N/A")
+                    detailed_explanation = flattened_json_data.get(f"{prefix}_answers_explanationText", "N/A")
+                    score_label = flattened_json_data.get(f"{prefix}_score_label", "N/A")
+                    response = flattened_json_data.get(f"{prefix}_answers_fieldAnswers", "N/A")
+                    
+                    checklist_data.append({
+                        "Num": row['Num'],
+                        "Chapitre": row['Chapitre'],
+                        "Theme": row['Theme'],
+                        "SSTheme": row['SSTheme'],
+                        "Explanation": explanation_text,
+                        "Detailed Explanation": detailed_explanation,
+                        "Score": score_label,
+                        "Response": response
+                    })
+            
+            # Extraire les non-conformités
+            non_conformities = [item for item in checklist_data if item['Score'] not in ['A', 'N/A']]
+            
+            # Interface à onglets
+            tab1, tab2, tab3, tab4 = st.tabs([
+                "📋 Profil de l'entreprise", 
+                "✅ Exigences de la checklist", 
+                "⚠️ Non-conformités",
+                "📊 Export & Statistiques"
+            ])
+            
+            with tab1:
+                st.markdown("### 📋 Informations sur l'entreprise auditée")
+                
+                if profile_data:
+                    # Afficher les informations importantes en haut
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Nom du site", profile_data.get("Nom du site à auditer", "N/A"))
+                    with col2:
+                        st.metric("COID", profile_data.get("N° COID du portail", "N/A"))
+                    with col3:
+                        st.metric("Ville", profile_data.get("Nom de la ville", "N/A"))
+                    
+                    # Tableau complet des données
+                    st.markdown("#### Données complètes du profil")
+                    profile_table = create_profile_table(profile_data)
+                    st.markdown(profile_table, unsafe_allow_html=True)
+                else:
+                    st.warning("Aucune donnée de profil trouvée dans le fichier.")
+            
+            with tab2:
+                st.markdown("### ✅ Exigences de la checklist IFS")
+                
+                if checklist_data:
+                    # Statistiques rapides
+                    total_req = len(checklist_data)
+                    scores_count = {}
+                    for item in checklist_data:
+                        score = item['Score']
+                        scores_count[score] = scores_count.get(score, 0) + 1
+                    
+                    col1, col2, col3, col4, col5 = st.columns(5)
+                    with col1:
+                        st.metric("Total", total_req)
+                    with col2:
+                        st.metric("Score A", scores_count.get('A', 0), 
+                                delta_color="normal")
+                    with col3:
+                        st.metric("Score B", scores_count.get('B', 0),
+                                delta_color="off")
+                    with col4:
+                        st.metric("Score C", scores_count.get('C', 0),
+                                delta_color="off")
+                    with col5:
+                        st.metric("Score D", scores_count.get('D', 0),
+                                delta_color="inverse")
+                    
+                    # Filtres par chapitre/thème
+                    if not uuid_mapping_df.empty:
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            chapitre_options = ["Tous"] + sorted(uuid_mapping_df['Chapitre'].dropna().unique())
+                            chapitre_filter = st.selectbox("Filtrer par Chapitre", options=chapitre_options)
+                        
+                        filtered_mapping = uuid_mapping_df
+                        if chapitre_filter != "Tous":
+                            filtered_mapping = filtered_mapping[filtered_mapping['Chapitre'] == chapitre_filter]
+                        
+                        with col2:
+                            theme_options = ["Tous"] + sorted(filtered_mapping['Theme'].dropna().unique())
+                            theme_filter = st.selectbox("Filtrer par Thème", options=theme_options)
+                        
+                        if theme_filter != "Tous":
+                            filtered_mapping = filtered_mapping[filtered_mapping['Theme'] == theme_filter]
+                        
+                        with col3:
+                            sstheme_options = ["Tous"] + sorted(filtered_mapping['SSTheme'].dropna().unique())
+                            sstheme_filter = st.selectbox("Filtrer par Sous-Thème", options=sstheme_options)
+                        
+                        # Appliquer les filtres de chapitre/thème
+                        filtered_checklist = checklist_data
+                        if chapitre_filter != "Tous":
+                            filtered_checklist = [item for item in filtered_checklist if item['Chapitre'] == chapitre_filter]
+                        if theme_filter != "Tous":
+                            filtered_checklist = [item for item in filtered_checklist if item['Theme'] == theme_filter]
+                        if sstheme_filter != "Tous":
+                            filtered_checklist = [item for item in filtered_checklist if item['SSTheme'] == sstheme_filter]
+                    else:
+                        filtered_checklist = checklist_data
+                    
+                    # Tableau des exigences
+                    checklist_table = create_checklist_table(filtered_checklist, show_filters=True)
+                    st.markdown(checklist_table, unsafe_allow_html=True)
+                else:
+                    st.warning("Aucune donnée de checklist trouvée.")
+            
+            with tab3:
+                st.markdown("### ⚠️ Non-conformités détectées")
+                
+                if non_conformities:
+                    st.error(f"**{len(non_conformities)} non-conformité(s) détectée(s)**")
+                    
+                    # Répartition par score
+                    nc_scores = {}
+                    for nc in non_conformities:
+                        score = nc['Score']
+                        nc_scores[score] = nc_scores.get(score, 0) + 1
+                    
+                    if nc_scores:
+                        cols = st.columns(len(nc_scores))
+                        for i, (score, count) in enumerate(nc_scores.items()):
+                            with cols[i]:
+                                color = {"B": "🟡", "C": "🟠", "D": "🔴"}.get(score, "⚫")
+                                st.metric(f"{color} Score {score}", count)
+                    
+                    # Tableau des non-conformités
+                    nc_table = create_checklist_table(non_conformities, show_filters=False)
+                    st.markdown(nc_table, unsafe_allow_html=True)
+                    
+                    st.markdown("""
+                    <div class="warning-box">
+                    <strong>Actions requises :</strong><br>
+                    • Analyser chaque non-conformité<br>
+                    • Établir un plan d'action corrective<br>
+                    • Définir les responsabilités et échéances<br>
+                    • Programmer le suivi des actions
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                else:
+                    st.markdown("""
+                    <div class="success-box">
+                    🎉 <strong>Félicitations !</strong><br>
+                    Aucune non-conformité détectée. Toutes les exigences sont conformes (Score A).
+                    </div>
+                    """, unsafe_allow_html=True)
+            
+            with tab4:
+                st.markdown("### 📊 Statistiques et Export")
+                
+                # Statistiques globales
+                if checklist_data:
+                    total = len(checklist_data)
+                    conformes = len([x for x in checklist_data if x['Score'] == 'A'])
+                    taux_conformite = (conformes / total * 100) if total > 0 else 0
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.markdown("#### 📈 Indicateurs de performance")
+                        st.metric("Taux de conformité", f"{taux_conformite:.1f}%")
+                        st.metric("Exigences conformes", f"{conformes}/{total}")
+                        st.metric("Non-conformités", len(non_conformities))
+                    
+                    with col2:
+                        st.markdown("#### 📊 Répartition des scores")
+                        scores_count = {}
+                        for item in checklist_data:
+                            score = item['Score']
+                            scores_count[score] = scores_count.get(score, 0) + 1
+                        
+                        chart_data = pd.DataFrame(list(scores_count.items()), columns=['Score', 'Nombre'])
+                        st.bar_chart(chart_data.set_index('Score'))
+                
+                # Export Excel
+                st.markdown("#### 📄 Export des données")
+                st.info("Générez un rapport Excel complet avec toutes les données extraites.")
+                
+                if st.button("🔄 Générer le rapport Excel", type="primary"):
+                    with st.spinner("Génération du fichier Excel..."):
+                        coid = profile_data.get("N° COID du portail", "inconnu")
+                        excel_file = create_excel_export(profile_data, checklist_data, non_conformities, coid)
+                        
                         date_str = datetime.now().strftime("%Y%m%d_%H%M")
-                        filename = f"audit_IFS_{coid}_{date_str}.xlsx"
+                        filename = f"rapport_IFS_{coid}_{date_str}.xlsx"
                         
                         st.download_button(
                             label="📥 Télécharger le rapport Excel",
@@ -571,36 +573,38 @@ def main():
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                         )
                         
-                        st.success("Fichier Excel généré avec succès!")
+                        st.success("✅ Rapport Excel généré avec succès!")
                         
-                        # Informations sur le contenu du fichier
-                        st.markdown("### 📋 Contenu du fichier Excel:")
+                        # Contenu du fichier
                         st.markdown("""
-                        - **Profil**: Informations sur l'entreprise avec commentaires
-                        - **Checklist**: Liste complète des exigences avec scores et commentaires
-                        - **Non-conformités**: Plan d'action détaillé pour chaque non-conformité
-                        - **Résumé**: Statistiques et indicateurs de performance
+                        **Contenu du rapport :**
+                        - 📋 **Profil** : Informations complètes sur l'entreprise
+                        - ✅ **Checklist** : Toutes les exigences avec scores et réponses
+                        - ⚠️ **Non-conformités** : Liste détaillée des points à corriger
+                        - 📊 **Statistiques** : Indicateurs de performance et taux de conformité
                         """)
+        
+        except json.JSONDecodeError:
+            st.error("❌ Erreur lors du décodage du fichier JSON. Veuillez vérifier le format.")
+        except Exception as e:
+            st.error(f"❌ Erreur lors du traitement du fichier : {str(e)}")
     
     else:
-        # Page d'accueil si aucun fichier n'est chargé
+        # Page d'accueil
         st.markdown("""
-        ### 🚀 Bienvenue dans l'extracteur de données IFS NEO
+        <div class="info-box">
+        <h3>🚀 Bienvenue dans l'extracteur de données IFS NEO</h3>
+        <p>Cette application vous permet d'analyser facilement vos rapports d'audit IFS :</p>
+        <ul>
+            <li>📊 <strong>Extraction automatique</strong> des données d'entreprise et d'audit</li>
+            <li>✅ <strong>Analyse complète</strong> de toutes les exigences IFS</li>
+            <li>⚠️ <strong>Identification</strong> des non-conformités</li>
+            <li>📄 <strong>Export Excel</strong> structuré pour vos rapports</li>
+        </ul>
         
-        Cette application vous permet de:
-        - 📊 Extraire et analyser les données d'audit IFS
-        - 💬 Ajouter vos commentaires et observations
-        - 📋 Créer des plans d'action pour les non-conformités
-        - 📄 Exporter tout dans un rapport Excel structuré
-        
-        **Pour commencer:**
-        1. Chargez votre fichier d'audit IFS (.ifs) dans la barre latérale
-        2. Naviguez entre les différentes sections
-        3. Ajoutez vos commentaires et plans d'action
-        4. Exportez le rapport final
-        """)
-        
-        st.markdown('<div class="warning-box">⚠️ Veuillez charger un fichier IFS pour commencer l\'analyse.</div>', unsafe_allow_html=True)
+        <p><strong>Pour commencer :</strong> Chargez votre fichier d'audit IFS (.ifs) ci-dessus</p>
+        </div>
+        """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
