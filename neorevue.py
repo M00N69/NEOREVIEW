@@ -11,7 +11,8 @@ import re
 # ================================
 st.set_page_config(
     page_title="IFS NEO Data Extractor",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
 # ================================
@@ -89,6 +90,73 @@ def load_uuid_mapping_from_url(url):
     except Exception as e:
         st.error(f"Erreur lors du chargement du mapping UUID: {str(e)}")
         return pd.DataFrame()
+
+def generate_audit_summary(checklist_df, nc_df, profile_df):
+    """Génère un résumé d'audit détaillé"""
+    summary_data = []
+    
+    # Summary statistics from checklist
+    if not checklist_df.empty:
+        total_requirements = len(checklist_df)
+        score_counts = checklist_df['Score'].value_counts()
+        
+        summary_data.extend([
+            {"Métrique": "Total des exigences", "Valeur": total_requirements, "Description": "Nombre total d'exigences auditées"},
+            {"Métrique": "Score A (Conforme)", "Valeur": score_counts.get('A', 0), "Description": "Exigences entièrement conformes"},
+            {"Métrique": "Score B (Écart mineur)", "Valeur": score_counts.get('B', 0), "Description": "Écarts mineurs détectés"},
+            {"Métrique": "Score C (Écart majeur)", "Valeur": score_counts.get('C', 0), "Description": "Écarts majeurs détectés"},
+            {"Métrique": "Score D (Critique)", "Valeur": score_counts.get('D', 0), "Description": "Non-conformités critiques"},
+            {"Métrique": "Score NA (Non applicable)", "Valeur": score_counts.get('NA', 0), "Description": "Exigences non applicables"},
+        ])
+        
+        # Calculate compliance percentage
+        conformes = score_counts.get('A', 0) + score_counts.get('NA', 0)
+        if total_requirements > 0:
+            compliance_rate = (conformes / total_requirements) * 100
+            summary_data.append({
+                "Métrique": "Taux de conformité (%)", 
+                "Valeur": f"{compliance_rate:.1f}%", 
+                "Description": "Pourcentage d'exigences conformes ou non applicables"
+            })
+
+    # Non-conformities summary
+    if not nc_df.empty:
+        nc_total = len(nc_df)
+        status_counts = nc_df['Statut'].value_counts() if 'Statut' in nc_df.columns else {}
+        
+        summary_data.extend([
+            {"Métrique": "Non-conformités totales", "Valeur": nc_total, "Description": "Nombre total de non-conformités (B, C, D)"},
+            {"Métrique": "Actions terminées", "Valeur": status_counts.get('Terminé', 0), "Description": "Actions correctives terminées"},
+            {"Métrique": "Actions en cours", "Valeur": status_counts.get('En cours', 0), "Description": "Actions correctives en cours"},
+            {"Métrique": "Actions en attente", "Valeur": status_counts.get('En attente', 0), "Description": "Actions correctives en attente"},
+        ])
+        
+        if nc_total > 0:
+            completion_rate = (status_counts.get('Terminé', 0) / nc_total) * 100
+            summary_data.append({
+                "Métrique": "Taux de résolution (%)", 
+                "Valeur": f"{completion_rate:.1f}%", 
+                "Description": "Pourcentage d'actions correctives terminées"
+            })
+
+    # Add audit info if available from profile
+    if not profile_df.empty:
+        try:
+            if 'Champ' in profile_df.columns and 'Valeur' in profile_df.columns:
+                company_info = profile_df.set_index('Champ')['Valeur'].to_dict()
+            else:
+                company_info = {}
+        except:
+            company_info = {}
+            
+        summary_data.extend([
+            {"Métrique": "Entreprise auditée", "Valeur": company_info.get("Nom du site à auditer", "N/A"), "Description": "Nom de l'entreprise"},
+            {"Métrique": "COID", "Valeur": company_info.get("N° COID du portail", "N/A"), "Description": "Numéro COID"},
+            {"Métrique": "Pays", "Valeur": company_info.get("Pays", "N/A"), "Description": "Pays du site audité"},
+            {"Métrique": "Date d'export", "Valeur": datetime.now().strftime("%Y-%m-%d %H:%M"), "Description": "Date et heure de génération du rapport"},
+        ])
+
+    return pd.DataFrame(summary_data)
 
 # ================================
 # FONCTIONS SAUVEGARDE/CHARGEMENT
@@ -307,6 +375,151 @@ def load_work_from_excel(uploaded_file):
     except Exception as e:
         return None, f"Erreur lors du chargement du fichier de travail: {str(e)}"
 
+def create_final_report_excel(profile_df, checklist_df, nc_df, is_from_work=False, work_data=None):
+    """Crée un rapport final Excel complet avec formatage professionnel"""
+    output = BytesIO()
+    
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        workbook = writer.book
+        
+        # Define professional formats for final report
+        header_format = workbook.add_format({
+            'bold': True,
+            'text_wrap': True,
+            'valign': 'top',
+            'fg_color': '#D7E4BC',  # Green theme for final report
+            'border': 1,
+            'font_size': 11
+        })
+        
+        cell_format = workbook.add_format({
+            'text_wrap': True,
+            'valign': 'top',
+            'border': 1,
+            'font_size': 10
+        })
+        
+        # Professional formatting for different sections
+        nc_format = workbook.add_format({
+            'text_wrap': True,
+            'valign': 'top',
+            'border': 1,
+            'fg_color': '#FFE6E6',  # Light red for non-conformities
+            'font_size': 10
+        })
+        
+        completed_format = workbook.add_format({
+            'text_wrap': True,
+            'valign': 'top',
+            'border': 1,
+            'fg_color': '#E6FFE6',  # Light green for completed actions
+            'font_size': 10
+        })
+        
+        warning_format = workbook.add_format({
+            'text_wrap': True,
+            'valign': 'top',
+            'border': 1,
+            'fg_color': '#FFF2CC',  # Light yellow for warnings
+            'font_size': 10
+        })
+        
+        # Create summary dashboard first
+        summary_df = generate_audit_summary(checklist_df, nc_df, profile_df)
+        if not summary_df.empty:
+            summary_df.to_excel(writer, index=False, sheet_name="Résumé_Audit")
+        
+        # Profile sheet
+        if not profile_df.empty:
+            profile_df.to_excel(writer, index=False, sheet_name="Profile")
+
+        # Checklist sheet
+        if not checklist_df.empty:
+            checklist_df.to_excel(writer, index=False, sheet_name="Checklist")
+
+        # Non-conformities sheet
+        if not nc_df.empty:
+            nc_df.to_excel(writer, index=False, sheet_name="Non-conformities")
+
+        # Apply enhanced formatting to all sheets
+        for sheet_name in writer.sheets:
+            worksheet = writer.sheets[sheet_name]
+            
+            # Get the dataframe for this sheet
+            if sheet_name == "Profile":
+                df = profile_df
+            elif sheet_name == "Checklist":
+                df = checklist_df
+            elif sheet_name == "Non-conformities":
+                df = nc_df
+            elif sheet_name == "Résumé_Audit":
+                df = summary_df
+            else:
+                continue
+            
+            if df.empty:
+                continue
+            
+            # Format headers
+            for col_num, value in enumerate(df.columns.values):
+                worksheet.write(0, col_num, value, header_format)
+            
+            # Set column widths dynamically
+            for col_num, col_name in enumerate(df.columns):
+                if isinstance(col_name, str):
+                    if col_name in ['Commentaire du reviewer', 'Réponse de l\'auditeur', 'Plan d\'action proposé', 'Actions mises en place']:
+                        worksheet.set_column(col_num, col_num, 40)  # Wide columns for comments
+                    elif col_name in ['Explication', 'Explication détaillée', 'Description']:
+                        worksheet.set_column(col_num, col_num, 35)  # Medium-wide for explanations
+                    elif col_name in ['Réponse']:
+                        worksheet.set_column(col_num, col_num, 30)  # Medium for responses
+                    elif col_name in ['Valeur', 'Champ']:
+                        worksheet.set_column(col_num, col_num, 25)  # Medium for values
+                    elif col_name in ['Num', 'Score', 'Statut']:
+                        worksheet.set_column(col_num, col_num, 12)  # Narrow for short data
+                    else:
+                        worksheet.set_column(col_num, col_num, 20)  # Default width
+            
+            # Apply conditional formatting for non-conformities sheet
+            if sheet_name == "Non-conformities" and not df.empty:
+                for row_num in range(1, len(df) + 1):
+                    # Get the score and status for conditional formatting
+                    score_col = None
+                    status_col = None
+                    for col_num, col_name in enumerate(df.columns):
+                        if col_name == 'Score':
+                            score_col = col_num
+                        elif col_name == 'Statut':
+                            status_col = col_num
+                    
+                    for col_num in range(len(df.columns)):
+                        cell_value = df.iloc[row_num-1, col_num]
+                        
+                        # Apply formatting based on score and status
+                        if score_col is not None:
+                            score = df.iloc[row_num-1, score_col]
+                            status = df.iloc[row_num-1, status_col] if status_col is not None else None
+                            
+                            if status == 'Terminé':
+                                worksheet.write(row_num, col_num, cell_value, completed_format)
+                            elif score == 'D':
+                                worksheet.write(row_num, col_num, cell_value, nc_format)
+                            elif score in ['B', 'C']:
+                                worksheet.write(row_num, col_num, cell_value, warning_format)
+                            else:
+                                worksheet.write(row_num, col_num, cell_value, cell_format)
+                        else:
+                            worksheet.write(row_num, col_num, cell_value, cell_format)
+            else:
+                # Apply standard formatting for other sheets
+                for row_num in range(1, len(df) + 1):
+                    for col_num in range(len(df.columns)):
+                        cell_value = df.iloc[row_num-1, col_num]
+                        worksheet.write(row_num, col_num, cell_value, cell_format)
+
+    output.seek(0)
+    return output
+
 # ================================
 # CONSTANTES ET CONFIGURATION
 # ================================
@@ -355,21 +568,31 @@ FLATTENED_FIELD_MAPPING = {
 def main():
     """Fonction principale de l'application"""
     
+    # Header avec style amélioré
+    st.markdown("""
+    <div style="background: linear-gradient(90deg, #4472C4, #70AD47); padding: 20px; border-radius: 10px; margin-bottom: 30px;">
+        <h1 style="color: white; text-align: center; margin: 0;">🔍 IFS NEO Data Extractor</h1>
+        <p style="color: white; text-align: center; margin: 10px 0 0 0; font-size: 18px;">
+            Application de communication reviewer ↔ auditeur pour audits IFS
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
     # Navigation dans la sidebar
     st.sidebar.title("📋 Menu de Navigation")
+    st.sidebar.markdown("---")
     main_option = st.sidebar.radio("Choisissez une fonctionnalité:", [
         "Traitement des rapports IFS", 
         "Gestion des fichiers Excel", 
         "Reprendre un travail sauvegardé"
     ])
 
-    st.title("🔍 IFS NEO Data Extractor")
-    st.markdown("*Application de communication reviewer ↔ auditeur pour audits IFS*")
-
     # ================================
     # TRAITEMENT DES RAPPORTS IFS
     # ================================
     if main_option == "Traitement des rapports IFS":
+        st.subheader("📊 Traitement d'un nouveau rapport IFS")
+        
         # Upload du fichier IFS
         uploaded_json_file = st.file_uploader(
             "📁 Charger le fichier IFS de NEO", 
@@ -380,8 +603,9 @@ def main():
         if uploaded_json_file:
             try:
                 # Charger et traiter le fichier JSON
-                json_data = json.load(uploaded_json_file)
-                flattened_json_data = flatten_json_safe(json_data)
+                with st.spinner("Traitement du fichier IFS..."):
+                    json_data = json.load(uploaded_json_file)
+                    flattened_json_data = flatten_json_safe(json_data)
                 
                 # Extraire les données de profil
                 profile_data = extract_from_flattened(
@@ -398,7 +622,7 @@ def main():
                     if 'checklists' in json_data['data']['modules']['food_8'] and 'checklistFood8' in json_data['data']['modules']['food_8']['checklists']:
                         if 'resultScorings' in json_data['data']['modules']['food_8']['checklists']['checklistFood8']:
                             result_scorings = json_data['data']['modules']['food_8']['checklists']['checklistFood8']['resultScorings']
-                            st.info(f"✅ Données de checklist trouvées : {len(result_scorings)} exigences détectées")
+                            st.success(f"✅ Données de checklist trouvées : {len(result_scorings)} exigences détectées")
                             
                             # Load UUID mapping for better display
                             with st.spinner("Chargement du mapping des exigences..."):
@@ -445,10 +669,10 @@ def main():
                                     "Chapitre": chapitre,
                                     "Theme": theme,
                                     "SSTheme": sstheme,
-                                    "Explanation": explanation_text,
-                                    "Detailed Explanation": detailed_explanation,
+                                    "Explication": explanation_text,
+                                    "Explication détaillée": detailed_explanation,
                                     "Score": score_label,
-                                    "Response": response
+                                    "Réponse": response
                                 })
                             
                             st.success(f"✅ Extraction réussie : {len(checklist_data)} exigences extraites")
@@ -466,6 +690,21 @@ def main():
                 st.session_state['current_profile_data'] = profile_data
                 st.session_state['current_checklist_data'] = checklist_data
                 st.session_state['current_non_conformities'] = non_conformities
+
+                # Quick stats
+                if checklist_data:
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Total exigences", len(checklist_data))
+                    with col2:
+                        conformes = len([item for item in checklist_data if item['Score'] in ['A', 'NA']])
+                        st.metric("Conformes", conformes)
+                    with col3:
+                        st.metric("Non-conformités", len(non_conformities))
+                    with col4:
+                        if len(checklist_data) > 0:
+                            taux = (conformes / len(checklist_data)) * 100
+                            st.metric("Taux conformité", f"{taux:.1f}%")
 
                 # Work save and export options in SIDEBAR
                 st.sidebar.markdown("---")
@@ -508,105 +747,39 @@ def main():
                     numero_coid = profile_data.get("N° COID du portail", "inconnu")
                     
                     with st.spinner("Génération du rapport final..."):
-                        # Create the Excel file with xlswriter for better performance and formatting
-                        output = BytesIO()
+                        # Prepare DataFrames for final report
+                        if 'edited_profile' in st.session_state:
+                            profile_export_df = st.session_state['edited_profile']
+                        else:
+                            profile_export_df = pd.DataFrame([
+                                {"Champ": k, "Valeur": v, "Commentaire du reviewer": "", "Réponse de l'auditeur": ""} 
+                                for k, v in profile_data.items()
+                            ])
                         
-                        # Use xlsxwriter for final export (better performance and formatting)
-                        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                            # Profile tab
-                            if 'edited_profile' in st.session_state:
-                                profile_export_df = st.session_state['edited_profile']
+                        if 'edited_checklist' in st.session_state:
+                            checklist_export_df = st.session_state['edited_checklist']
+                        else:
+                            checklist_export_df = pd.DataFrame(checklist_data)
+                            checklist_export_df['Commentaire du reviewer'] = ''
+                            checklist_export_df['Réponse de l\'auditeur'] = ''
+                        
+                        if non_conformities:
+                            if 'edited_nc' in st.session_state:
+                                nc_export_df = st.session_state['edited_nc']
                             else:
-                                profile_export_df = pd.DataFrame([
-                                    {"Champ": k, "Valeur": v, "Commentaire du reviewer": "", "Réponse de l'auditeur": ""} 
-                                    for k, v in profile_data.items()
-                                ])
-                            
-                            profile_export_df.to_excel(writer, index=False, sheet_name="Profile")
-
-                            # Checklist tab
-                            if 'edited_checklist' in st.session_state:
-                                checklist_export_df = st.session_state['edited_checklist']
-                            else:
-                                checklist_export_df = pd.DataFrame(checklist_data)
-                                checklist_export_df['Commentaire du reviewer'] = ''
-                                checklist_export_df['Réponse de l\'auditeur'] = ''
-                            
-                            checklist_export_df.to_excel(writer, index=False, sheet_name="Checklist")
-
-                            # Non-conformities tab
-                            if non_conformities:
-                                if 'edited_nc' in st.session_state:
-                                    nc_export_df = st.session_state['edited_nc']
-                                else:
-                                    nc_export_df = pd.DataFrame(non_conformities)
-                                    nc_export_df['Commentaire du reviewer'] = ''
-                                    nc_export_df['Réponse de l\'auditeur'] = ''
-                                    nc_export_df['Plan d\'action proposé'] = ''
-                                    nc_export_df['Actions mises en place'] = ''
-                                    nc_export_df['Date limite'] = ''
-                                    nc_export_df['Responsable'] = ''
-                                    nc_export_df['Statut'] = 'En attente'
-                                
-                                nc_export_df.to_excel(writer, index=False, sheet_name="Non-conformities")
-
-                            # Enhanced formatting with xlsxwriter
-                            workbook = writer.book
-                            
-                            # Define formats
-                            header_format = workbook.add_format({
-                                'bold': True,
-                                'text_wrap': True,
-                                'valign': 'top',
-                                'fg_color': '#D7E4BC',
-                                'border': 1
-                            })
-                            
-                            cell_format = workbook.add_format({
-                                'text_wrap': True,
-                                'valign': 'top',
-                                'border': 1
-                            })
-                            
-                            # Apply formatting and adjust column widths for all sheets
-                            for sheet_name in writer.sheets:
-                                worksheet = writer.sheets[sheet_name]
-                                
-                                # Get the dataframe for this sheet to know the number of columns
-                                if sheet_name == "Profile":
-                                    df = profile_export_df
-                                elif sheet_name == "Checklist":
-                                    df = checklist_export_df
-                                elif sheet_name == "Non-conformities" and non_conformities:
-                                    df = nc_export_df
-                                else:
-                                    continue
-                                
-                                # Format headers
-                                for col_num, value in enumerate(df.columns.values):
-                                    worksheet.write(0, col_num, value, header_format)
-                                
-                                # Set column widths and wrap text
-                                for col_num, col_name in enumerate(df.columns):
-                                    # Calculate optimal width
-                                    max_len = max(
-                                        df[col_name].astype(str).map(len).max(),  # Max length in column
-                                        len(str(col_name))  # Header length
-                                    )
-                                    
-                                    # Set width with limits
-                                    if col_name in ['Commentaire du reviewer', 'Réponse de l\'auditeur', 'Plan d\'action proposé', 'Actions mises en place', 'Explication', 'Explication détaillée', 'Réponse']:
-                                        worksheet.set_column(col_num, col_num, min(50, max(20, max_len)))
-                                    else:
-                                        worksheet.set_column(col_num, col_num, min(30, max(10, max_len)))
-                                
-                                # Apply cell formatting to data rows
-                                for row_num in range(1, len(df) + 1):
-                                    for col_num in range(len(df.columns)):
-                                        worksheet.write(row_num, col_num, df.iloc[row_num-1, col_num], cell_format)
-
-                        # Reset the position of the output to the start
-                        output.seek(0)
+                                nc_export_df = pd.DataFrame(non_conformities)
+                                nc_export_df['Commentaire du reviewer'] = ''
+                                nc_export_df['Réponse de l\'auditeur'] = ''
+                                nc_export_df['Plan d\'action proposé'] = ''
+                                nc_export_df['Actions mises en place'] = ''
+                                nc_export_df['Date limite'] = ''
+                                nc_export_df['Responsable'] = ''
+                                nc_export_df['Statut'] = 'En attente'
+                        else:
+                            nc_export_df = pd.DataFrame()
+                        
+                        # Create final report
+                        final_report = create_final_report_excel(profile_export_df, checklist_export_df, nc_export_df)
                     
                     st.sidebar.success("📊 Rapport final généré !")
                     
@@ -619,9 +792,10 @@ def main():
                     # Provide the download button with the COID number in the filename
                     st.sidebar.download_button(
                         label="📥 Télécharger rapport",
-                        data=output,
+                        data=final_report,
                         file_name=final_filename,
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        help="Rapport final complet avec résumé d'audit",
                         key="download_final_btn"
                     )
 
@@ -629,7 +803,7 @@ def main():
                 tab = st.radio("Sélectionnez un onglet:", ["Profile", "Checklist", "Non-conformities"])
 
                 if tab == "Profile":
-                    st.subheader("Profile de l'entreprise")
+                    st.subheader("🏢 Profile de l'entreprise")
                     
                     # Create DataFrame for profile with reviewer/auditor communication columns
                     profile_list = []
@@ -664,7 +838,7 @@ def main():
                     st.session_state['edited_profile'] = edited_profile_df
 
                 elif tab == "Checklist":
-                    st.subheader("Checklist des exigences")
+                    st.subheader("📋 Checklist des exigences")
                     
                     # Add filters
                     col1, col2, col3, col4 = st.columns(4)
@@ -699,12 +873,12 @@ def main():
                     # Filtre par contenu des explications
                     if content_filter == "Explications non vides":
                         filtered_checklist = [item for item in filtered_checklist 
-                                            if (item['Explanation'] != 'N/A' and item['Explanation'].strip() != '') 
-                                            or (item['Detailed Explanation'] != 'N/A' and item['Detailed Explanation'].strip() != '')]
+                                            if (item['Explication'] != 'N/A' and item['Explication'].strip() != '') 
+                                            or (item['Explication détaillée'] != 'N/A' and item['Explication détaillée'].strip() != '')]
                     elif content_filter == "Explications vides":
                         filtered_checklist = [item for item in filtered_checklist 
-                                            if (item['Explanation'] == 'N/A' or item['Explanation'].strip() == '') 
-                                            and (item['Detailed Explanation'] == 'N/A' or item['Detailed Explanation'].strip() == '')]
+                                            if (item['Explication'] == 'N/A' or item['Explication'].strip() == '') 
+                                            and (item['Explication détaillée'] == 'N/A' or item['Explication détaillée'].strip() == '')]
                     
                     st.info(f"Affichage de {len(filtered_checklist)} exigences sur {len(checklist_data)} au total")
                     
@@ -725,10 +899,10 @@ def main():
                                 col_detail1, col_detail2 = st.columns([2, 1])
                                 
                                 with col_detail1:
-                                    st.write(f"**📖 Explication:** {item['Explanation']}")
-                                    st.write(f"**📋 Explication détaillée:** {item['Detailed Explanation']}")
+                                    st.write(f"**📖 Explication:** {item['Explication']}")
+                                    st.write(f"**📋 Explication détaillée:** {item['Explication détaillée']}")
                                     if show_responses:
-                                        st.write(f"**💬 Réponse:** {item['Response']}")
+                                        st.write(f"**💬 Réponse:** {item['Réponse']}")
                                 
                                 with col_detail2:
                                     st.write(f"**N°:** {item['Num']}")
@@ -768,13 +942,13 @@ def main():
                                 "Num": item['Num'],
                                 "Score": item['Score'],
                                 "Chapitre": item.get('Chapitre', 'N/A'),
-                                "Explication": item['Explanation'],
-                                "Explication détaillée": item['Detailed Explanation'],
+                                "Explication": item['Explication'],
+                                "Explication détaillée": item['Explication détaillée'],
                                 "Commentaire du reviewer": comments_reviewer_dict.get(item['Num'], ""),
                                 "Réponse de l'auditeur": comments_auditor_dict.get(item['Num'], "")
                             }
                             if show_responses:
-                                row["Réponse"] = item['Response']
+                                row["Réponse"] = item['Réponse']
                             checklist_list.append(row)
                         
                         checklist_df = pd.DataFrame(checklist_list)
@@ -783,7 +957,7 @@ def main():
                         st.warning("Aucune exigence trouvée avec ces filtres.")
 
                 elif tab == "Non-conformities":
-                    st.subheader("Non-conformités - Plan d'actions et suivi")
+                    st.subheader("❗ Non-conformités - Plan d'actions et suivi")
                     
                     if non_conformities:
                         st.warning(f"**{len(non_conformities)} non-conformité(s) détectée(s)** (scores B, C, D uniquement)")
@@ -807,9 +981,9 @@ def main():
                                 col_nc1, col_nc2 = st.columns([3, 1])
                                 
                                 with col_nc1:
-                                    st.markdown(f"**📖 Explication:** {item['Explanation']}")
-                                    st.markdown(f"**📋 Explication détaillée:** {item['Detailed Explanation']}")
-                                    st.markdown(f"**💬 Réponse système:** {item['Response']}")
+                                    st.markdown(f"**📖 Explication:** {item['Explication']}")
+                                    st.markdown(f"**📋 Explication détaillée:** {item['Explication détaillée']}")
+                                    st.markdown(f"**💬 Réponse système:** {item['Réponse']}")
                                 
                                 with col_nc2:
                                     st.markdown(f"**N°:** {item['Num']}")
@@ -907,9 +1081,9 @@ def main():
                                 "Num": item['Num'],
                                 "Score": item['Score'],
                                 "Chapitre": item.get('Chapitre', 'N/A'),
-                                "Explication": item['Explanation'],
-                                "Explication détaillée": item['Detailed Explanation'],
-                                "Réponse": item['Response'],
+                                "Explication": item['Explication'],
+                                "Explication détaillée": item['Explication détaillée'],
+                                "Réponse": item['Réponse'],
                                 "Commentaire du reviewer": nc_comments.get(item['Num'], ""),
                                 "Réponse de l'auditeur": nc_auditor_responses.get(item['Num'], ""),
                                 "Plan d'action proposé": nc_action_plans.get(item['Num'], ""),
@@ -931,6 +1105,24 @@ def main():
                 st.error(f"Erreur lors du traitement du fichier: {str(e)}")
         else:
             st.info("Veuillez charger un fichier IFS de NEO pour commencer.")
+            
+            # Guide d'utilisation
+            st.markdown("""
+            ### 📋 Guide d'utilisation :
+            
+            1. **Exportez** votre audit depuis NEO au format `.ifs`
+            2. **Chargez** le fichier ci-dessus
+            3. **Explorez** les données extraites dans les onglets
+            4. **Ajoutez** vos commentaires reviewer/auditeur
+            5. **Sauvegardez** votre travail ou exportez le rapport final
+            
+            ✨ **Fonctionnalités principales :**
+            - Extraction automatique des données IFS
+            - Communication bidirectionnelle reviewer ↔ auditeur
+            - Suivi des non-conformités avec plans d'action
+            - Exports Excel formatés professionnellement
+            - Sauvegarde de travail pour reprendre plus tard
+            """)
 
     # ================================
     # REPRENDRE UN TRAVAIL SAUVEGARDÉ
@@ -961,7 +1153,7 @@ def main():
                 tab_work = st.radio("Sélectionnez un onglet:", ["Profile", "Checklist", "Non-conformities"])
                 
                 if tab_work == "Profile" and 'profile' in work_data:
-                    st.subheader("Profile de l'entreprise (travail repris)")
+                    st.subheader("🏢 Profile de l'entreprise (travail repris)")
                     
                     # Clean and prepare DataFrame for st.data_editor
                     required_profile_columns = ["Champ", "Valeur", "Commentaire du reviewer", "Réponse de l'auditeur"]
@@ -992,7 +1184,7 @@ def main():
                     st.session_state['edited_profile_work'] = edited_profile_work
                 
                 elif tab_work == "Checklist" and 'checklist' in work_data:
-                    st.subheader("Checklist des exigences (travail repris)")
+                    st.subheader("📋 Checklist des exigences (travail repris)")
                     
                     # Ensure consistent DataFrame structure
                     work_checklist_df = work_data['checklist'].copy()
@@ -1119,7 +1311,7 @@ def main():
                         st.warning("Aucune exigence trouvée avec ces filtres.")
                 
                 elif tab_work == "Non-conformities" and 'nc' in work_data:
-                    st.subheader("Non-conformités (travail repris)")
+                    st.subheader("❗ Non-conformités (travail repris)")
                     
                     # Ensure consistent DataFrame structure
                     work_nc_df = work_data['nc'].copy()
@@ -1379,10 +1571,91 @@ def main():
                         key="download_updated_work_btn"
                     )
                 
-                # Export rapport final depuis travail repris
+                # Export rapport final depuis travail repris - IMPLÉMENTATION COMPLÈTE
                 st.sidebar.write("**📊 Rapport final**")
                 if st.sidebar.button("📊 Générer rapport final", type="primary", key="export_from_work_btn"):
-                    st.sidebar.info("Fonctionnalité d'export final depuis travail repris - à implémenter si besoin")
+                    with st.spinner("Génération du rapport final depuis travail repris..."):
+                        # Prepare DataFrames for final report from work data
+                        if 'edited_profile_work' in st.session_state:
+                            profile_export_df = st.session_state['edited_profile_work']
+                        elif 'profile' in work_data:
+                            profile_export_df = work_data['profile'].copy()
+                            # Ensure communication columns exist
+                            if "Commentaire du reviewer" not in profile_export_df.columns:
+                                profile_export_df["Commentaire du reviewer"] = ""
+                            if "Réponse de l'auditeur" not in profile_export_df.columns:
+                                profile_export_df["Réponse de l'auditeur"] = ""
+                        else:
+                            profile_export_df = pd.DataFrame()
+                        
+                        if 'edited_checklist_work' in st.session_state:
+                            checklist_export_df = st.session_state['edited_checklist_work']
+                        elif 'checklist' in work_data:
+                            checklist_export_df = work_data['checklist'].copy()
+                            # Ensure communication columns exist
+                            if "Commentaire du reviewer" not in checklist_export_df.columns:
+                                checklist_export_df["Commentaire du reviewer"] = ""
+                            if "Réponse de l'auditeur" not in checklist_export_df.columns:
+                                checklist_export_df["Réponse de l'auditeur"] = ""
+                        else:
+                            checklist_export_df = pd.DataFrame()
+                        
+                        if 'edited_nc_work' in st.session_state:
+                            nc_export_df = st.session_state['edited_nc_work']
+                        elif 'nc' in work_data:
+                            nc_export_df = work_data['nc'].copy()
+                            # Ensure all required columns exist
+                            required_nc_columns = [
+                                'Commentaire du reviewer', 'Réponse de l\'auditeur', 'Plan d\'action proposé', 
+                                'Actions mises en place', 'Date limite', 'Responsable', 'Statut'
+                            ]
+                            for col in required_nc_columns:
+                                if col not in nc_export_df.columns:
+                                    if col == "Statut":
+                                        nc_export_df[col] = "En attente"
+                                    else:
+                                        nc_export_df[col] = ""
+                        else:
+                            nc_export_df = pd.DataFrame()
+                        
+                        # Create final report using the enhanced function
+                        final_report = create_final_report_excel(profile_export_df, checklist_export_df, nc_export_df, is_from_work=True, work_data=work_data)
+                    
+                    st.sidebar.success("📊 Rapport final généré depuis travail repris !")
+                    
+                    # Create filename - try to extract company info from work data
+                    try:
+                        if 'profile' in work_data and not work_data['profile'].empty:
+                            if 'Champ' in work_data['profile'].columns and 'Valeur' in work_data['profile'].columns:
+                                profile_dict = work_data['profile'].set_index('Champ')['Valeur'].to_dict()
+                                company_name = profile_dict.get("Nom du site à auditer", "entreprise_reprise")
+                                coid = profile_dict.get("N° COID du portail", "coid_repris")
+                            else:
+                                company_name = "entreprise_reprise"
+                                coid = "travail_repris"
+                        else:
+                            company_name = "entreprise_reprise"
+                            coid = "travail_repris"
+                        
+                        # Clean company name for filename
+                        clean_company_name = re.sub(r'[^\w\s-]', '', str(company_name)).strip()
+                        clean_company_name = re.sub(r'[-\s]+', '_', clean_company_name)
+                        
+                        final_filename = f'rapport_final_IFS_{coid}_{clean_company_name}_repris.xlsx'
+                    except:
+                        # Fallback filename
+                        date_str = datetime.now().strftime("%Y%m%d_%H%M")
+                        final_filename = f'rapport_final_IFS_travail_repris_{date_str}.xlsx'
+                    
+                    # Provide the download button
+                    st.sidebar.download_button(
+                        label="📥 Télécharger rapport final",
+                        data=final_report,
+                        file_name=final_filename,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        help="Rapport final complet avec résumé d'audit, formatage professionnel et suivi des actions",
+                        key="download_final_from_work_btn"
+                    )
         else:
             st.markdown("""
             ### 📋 Comment utiliser cette fonctionnalité :
@@ -1400,48 +1673,132 @@ def main():
             - Collaboration possible (partage du fichier de travail)
             - Pas de perte de données
             - **Interface identique** à l'audit normal
+            - **Export rapport final** directement depuis le travail repris
             """)
 
     # ================================
     # GESTION DES FICHIERS EXCEL
     # ================================
     elif main_option == "Gestion des fichiers Excel":
-        st.subheader("Gestion des fichiers Excel")
+        st.subheader("📊 Gestion des fichiers Excel")
+        st.info("Chargez et éditez des fichiers Excel existants pour les compléter ou les modifier.")
+        
         uploaded_excel_file = st.file_uploader("Charger le fichier Excel pour compléter les commentaires", type="xlsx")
 
         if uploaded_excel_file:
             try:
                 # Load the uploaded Excel file
-                excel_data = pd.read_excel(uploaded_excel_file, sheet_name=None)
+                with st.spinner("Chargement du fichier Excel..."):
+                    excel_data = pd.read_excel(uploaded_excel_file, sheet_name=None)
+
+                st.success(f"✅ Fichier Excel chargé avec {len(excel_data)} feuille(s)")
 
                 # Display the Excel content for editing
                 st.subheader("Contenu du fichier Excel")
                 sheet = st.selectbox("Sélectionnez une feuille:", list(excel_data.keys()))
                 df = excel_data[sheet]
+                
+                # Show sheet info
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Lignes", len(df))
+                with col2:
+                    st.metric("Colonnes", len(df.columns))
 
                 # Display the DataFrame
-                edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True)
+                st.write(f"**Édition de la feuille : {sheet}**")
+                edited_df = st.data_editor(
+                    df, 
+                    num_rows="dynamic", 
+                    use_container_width=True,
+                    height=600
+                )
 
                 # Save and provide a download link for the edited Excel file
-                if st.button("Enregistrer les modifications"):
-                    output = BytesIO()
-                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        # Update the specific sheet with edited data
-                        excel_data[sheet] = edited_df
-                        for sheet_name, df_sheet in excel_data.items():
-                            df_sheet.to_excel(writer, index=False, sheet_name=sheet_name)
-                    output.seek(0)
-                    st.download_button(
-                        label="Télécharger le fichier Excel modifié",
-                        data=output,
-                        file_name="modified_excel.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("💾 Enregistrer les modifications", type="primary"):
+                        with st.spinner("Sauvegarde des modifications..."):
+                            output = BytesIO()
+                            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                                # Update the specific sheet with edited data
+                                excel_data[sheet] = edited_df
+                                
+                                # Write all sheets to the new file
+                                for sheet_name, df_sheet in excel_data.items():
+                                    df_sheet.to_excel(writer, index=False, sheet_name=sheet_name)
+                                    
+                                    # Apply basic formatting
+                                    workbook = writer.book
+                                    worksheet = writer.sheets[sheet_name]
+                                    
+                                    # Header formatting
+                                    header_format = workbook.add_format({
+                                        'bold': True,
+                                        'text_wrap': True,
+                                        'valign': 'top',
+                                        'fg_color': '#D7E4BC',
+                                        'border': 1
+                                    })
+                                    
+                                    # Apply header format
+                                    for col_num, value in enumerate(df_sheet.columns.values):
+                                        worksheet.write(0, col_num, value, header_format)
+                                        
+                                        # Auto-adjust column width
+                                        worksheet.set_column(col_num, col_num, 20)
+                            
+                            output.seek(0)
+                        
+                        st.success("✅ Modifications sauvegardées!")
+                        
+                        # Generate filename
+                        original_name = uploaded_excel_file.name.replace('.xlsx', '')
+                        date_str = datetime.now().strftime("%Y%m%d_%H%M")
+                        modified_filename = f"{original_name}_modifie_{date_str}.xlsx"
+                        
+                        st.download_button(
+                            label="📥 Télécharger le fichier Excel modifié",
+                            data=output,
+                            file_name=modified_filename,
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            help="Fichier Excel avec vos modifications appliquées"
+                        )
+
+                with col2:
+                    if st.button("🔄 Réinitialiser", type="secondary"):
+                        st.rerun()
 
             except Exception as e:
-                st.error(f"Erreur lors du traitement du fichier Excel: {e}")
+                st.error(f"❌ Erreur lors du traitement du fichier Excel: {e}")
         else:
-            st.info("Veuillez charger un fichier Excel pour commencer.")
+            st.markdown("""
+            ### 📊 Fonctionnalités de gestion Excel :
+            
+            ✅ **Ce que vous pouvez faire :**
+            - Charger n'importe quel fichier Excel (.xlsx)
+            - Éditer le contenu des cellules directement
+            - Ajouter ou supprimer des lignes
+            - Naviguer entre les différentes feuilles
+            - Sauvegarder avec formatage professionnel
+            - Télécharger le fichier modifié
+            
+            💡 **Idéal pour :**
+            - Compléter des rapports d'audit existants
+            - Modifier des templates IFS
+            - Ajouter des commentaires à des fichiers de travail
+            - Corriger des données avant finalisation
+            """)
+    
+    # Footer
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("""
+    <div style="text-align: center; color: #666; font-size: 12px;">
+        <p>🔍 <strong>IFS NEO Data Extractor</strong></p>
+        <p>Application spécialisée pour audits IFS</p>
+        <p>Communication reviewer ↔ auditeur</p>
+    </div>
+    """, unsafe_allow_html=True)
 
 # ================================
 # EXÉCUTION PRINCIPALE
